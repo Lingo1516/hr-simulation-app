@@ -18,20 +18,17 @@ st.markdown("---")
 st.write("請輸入你的姓名與策略預算，並執行模擬。")
 
 # --- User Input Interface ---
-col1, col2 = st.columns(2)
-with col1:
-    player_name = st.text_input("玩家姓名", value=st.session_state.player_name, key="player_name_input")
-    st.session_state.player_name = player_name
-with col2:
-    st.write(f"當前回合數: {st.session_state.round_number}")
-    st.markdown("### ") # Add space
+player_name = st.text_input("玩家姓名", value=st.session_state.player_name, key="player_name_input")
+st.session_state.player_name = player_name
+
+st.write(f"當前回合數: {st.session_state.round_number}")
 
 st.markdown("---")
 
-col3, col4 = st.columns(2)
-with col3:
+col1, col2 = st.columns(2)
+with col1:
     salary_budget = st.slider("薪資預算 (百萬)", 0, 20, 10, key="salary_budget")
-with col4:
+with col2:
     training_budget = st.slider("培訓預算 (百萬)", 0, 10, 5, key="training_budget")
 
 # --- Core Simulation and Data Storage ---
