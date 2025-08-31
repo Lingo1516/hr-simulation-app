@@ -50,8 +50,8 @@ if st.button("執行模擬"):
             gc = service_account.from_keyfile_dict(st.secrets["gspread"])
             
             # 開啟你的試算表
-            sh = gc.open("你的Google Sheets名稱")
-            worksheet = sh.worksheet("你的工作表名稱")
+            sh = gc.open("My Streamlit Sheet")
+            worksheet = sh.worksheet("sh.worksheet")
             
             # 將資料寫入新的列
             worksheet.append_row(data_to_add)
@@ -64,12 +64,13 @@ if st.button("執行模擬"):
 st.header("即時排行榜")
 # 從 Google Sheets 讀取資料
 try:
-    # 這裡需要你的 Google Sheets 網址，並設定為公開
-    gsheet_url = "https://docs.google.com/spreadsheets/d/你的Google Sheets ID/gviz/tq?tqx=out:csv"
+    # 這裡使用你的 Google Sheets ID
+    gsheet_url = "https://docs.google.com/spreadsheets/d/1kU4W28ZIcTwvRoWybMtzDbs6Vybp1-gLHM1QYllngIs/gviz/tq?tqx=out:csv"
     df = pd.read_csv(gsheet_url)
     
     if not df.empty:
         # 顯示所有玩家的資料，並以員工滿意度排序
+        # 這裡需要確保 Google Sheets 的 "員工滿意度" 欄位名稱是準確的
         df_sorted = df.sort_values(by="員工滿意度", ascending=False)
         st.dataframe(df_sorted, hide_index=True)
     else:
