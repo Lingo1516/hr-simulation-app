@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 from gspread import service_account
-from gspread.exceptions import WorksheetNotFound
 
 # 設定頁面標題和佈局
 st.set_page_config(page_title="人力資源策略模擬", layout="wide")
@@ -48,7 +47,7 @@ if st.button("執行模擬"):
         # 這裡會將資料寫入 Google Sheets
         try:
             # 取得你的 Google Sheets 憑證
-            gc = service_account.Credentials.from_service_account_info(st.secrets.gspread)
+            gc = service_account.from_keyfile_dict(st.secrets.gspread)
             
             # 開啟你的試算表
             sh = gc.open("My Streamlit Sheet")
@@ -58,8 +57,6 @@ if st.button("執行模擬"):
             worksheet.append_row(data_to_add)
             
             st.success(f"模擬成功！你的結果已寫入排行榜。")
-        except WorksheetNotFound:
-            st.error("工作表名稱有誤，請檢查 'My Streamlit Sheet' 裡的 'sh.worksheet' 是否存在。")
         except Exception as e:
             st.error(f"寫入資料時發生錯誤：{e}")
 
