@@ -1,12 +1,9 @@
 import streamlit as st
 import pandas as pd
+from gspread import service_account
 
 # 設定頁面標題和佈局
 st.set_page_config(page_title="人力資源策略模擬", layout="wide")
-
-# 初始化 session state
-if 'results' not in st.session_state:
-    st.session_state.results = None
 
 # --- 頁面標題與說明 ---
 st.title("人力資源策略模擬")
@@ -14,17 +11,21 @@ st.markdown("---")
 st.write("請輸入你的姓名與策略預算，並執行模擬。")
 
 # --- 使用者輸入介面 ---
-player_name = st.text_input("玩家姓名", key="player_name")
-round_number = st.number_input("回合數", min_value=1, value=1, key="round_number")
-st.markdown("---")
-
 col1, col2 = st.columns(2)
 with col1:
-    salary_budget = st.slider("薪資預算 (百萬)", 0, 20, 10, key="salary_budget")
+    player_name = st.text_input("玩家姓名", key="player_name")
 with col2:
+    round_number = st.number_input("回合數", min_value=1, value=1, key="round_number")
+
+st.markdown("---")
+
+col3, col4 = st.columns(2)
+with col3:
+    salary_budget = st.slider("薪資預算 (百萬)", 0, 20, 10, key="salary_budget")
+with col4:
     training_budget = st.slider("培訓預算 (百萬)", 0, 10, 5, key="training_budget")
 
-# --- 核心模擬運算 ---
+# --- 核心模擬與資料儲存 ---
 if st.button("執行模擬"):
     if not player_name:
         st.warning("請輸入你的姓名！")
@@ -33,15 +34,45 @@ if st.button("執行模擬"):
         turnover_rate = 50 - (salary_budget * 1.5) - (training_budget * 2.0)
         satisfaction = 60 + (salary_budget * 1.0) + (training_budget * 1.5)
 
-        # 將結果儲存到 session state
-        st.session_state.results = pd.DataFrame({
-            "指標": ["員工流動率", "員工滿意度"],
-            "結果": [f"{turnover_rate:.2f}%", f"{satisfaction:.2f}分"]
-        })
+        # 準備資料
+        data_to_add = [
+            player_name,
+            round_number,
+            salary_budget,
+            training_budget,
+            f"{turnover_rate:.2f}%",
+            f"{satisfaction:.2f}分"
+        ]
 
-        st.success(f"模擬成功！你的結果已顯示。")
+        # 這裡會將資料寫入 Google Sheets
+        try:
+            # 取得你的 Google Sheets 憑證
+            gc = service_account.from_keyfile_dict(st.secrets["gspread"])
+            
+            # 開啟你的試算表
+            sh = gc.open("你的Google Sheets名稱")
+            worksheet = sh.worksheet("你的工作表名稱")
+            
+            # 將資料寫入新的列
+            worksheet.append_row(data_to_add)
+            
+            st.success(f"模擬成功！你的結果已寫入排行榜。")
+        except Exception as e:
+            st.error(f"寫入資料時發生錯誤：{e}")
 
-# 顯示結果
-if st.session_state.results is not None:
-    st.header("模擬結果")
-    st.dataframe(st.session_state.results, hide_index=True)
+# --- 排行榜 ---
+st.header("即時排行榜")
+# 從 Google Sheets 讀取資料
+try:
+    # 這裡需要你的 Google Sheets 網址，並設定為公開
+    gsheet_url = "https://docs.google.com/spreadsheets/d/你的Google Sheets ID/gviz/tq?tqx=out:csv"
+    df = pd.read_csv(gsheet_url)
+    
+    if not df.empty:
+        # 顯示所有玩家的資料，並以員工滿意度排序
+        df_sorted = df.sort_values(by="員工滿意度", ascending=False)
+        st.dataframe(df_sorted, hide_index=True)
+    else:
+        st.info("目前沒有玩家數據。")
+except Exception as e:
+    st.error(f"讀取資料時發生錯誤：{e}")
