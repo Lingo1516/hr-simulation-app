@@ -1,351 +1,405 @@
-# app.py (最終修正版 - V4)
-# 修正 V3 的 KeyError: 'current'
-# 1. 增加「防禦性」程式碼到 display_dashboard()
-# 2. 修正 Undo 邏輯，在失敗時也 rerun
+好的，我明白了。
+
+我們將**放棄**之前比較簡單的 HR 遊戲，**全新開始**打造這個更複雜、更完整的「**新星製造 (Nova Manufacturing) 企業經營模擬器**」。
+
+這套系統的核心邏輯與 HR 遊戲**完全不同**。HR 遊戲是「單機版」，10 組互不影響。這套新系統是「**多人連線競賽**」，10 組**互相競爭**，您（A組）的定價、$P_1$ 廣告費、研發等級，會**直接影響** B 組和 C 組的銷量和市佔率。
+
+因此，程式的架構會更複雜。我們需要一個「**管理員面板**」（給您）和一個「**學生面板**」（給 10 組）。
+
+  * **您 (老師)**：在側邊欄 (Sidebar) 控制遊戲進程。您會看到一個總覽，顯示哪一組提交了決策。
+  * **學生 (10組)**：在主畫面選擇隊伍，填寫「決策工作單」。
+
+**遊戲流程會是這樣：**
+
+1.  所有 10 組學生在各自的電腦上打開同一個 Streamlit 網頁，選擇自己的隊伍。
+2.  他們填寫第 1 季的「決策工作單」並按下「提交」。
+3.  提交**不會**立刻結算。他們會看到一個「等待老師結算...」的畫面。
+4.  您（老師）在管理員面板上會看到「10/10 組已提交」。
+5.  您按下「**結算本季**」按鈕。
+6.  伺服器（程式）**在此刻**才會執行那個複雜的「市場競爭模型」，一次性運算所有 10 組的市佔率、營收、成本、利潤...
+7.  程式自動推進到第 2 季。
+8.  所有學生的畫面自動刷新，看到第 1 季的結果（儀表板更新），和第 2 季的決策單。
+
+-----
+
+這是一個龐大的工程，我們分階段來做。
+
+這是**第一版 (V1) 的基礎框架程式碼**。它包含了：
+
+1.  **遊戲基本參數** (來自 `基本參數.csv`)。
+2.  **管理員面板** (側邊欄)，包含「結算本季」和「重置遊戲」按鈕。
+3.  **學生登入** (下拉選單) 與**儀表板 (Dashboard)** (來自 `資訊.csv`)。
+4.  完整的**決策表單 (Form)** (來自 `工作單.csv`)。
+5.  一個**簡化版**的結算引擎 (目前只會扣錢和生產，**尚未加入市場競爭模型**)。
+
+請您先使用這份 V1 程式碼，確認基礎框架是您想要的：
+
+```python
+# app.py (Nova Manufacturing Sim - V1)
+# 執行方式: streamlit run app.py
 
 import streamlit as st
-import copy # 引入 copy 模組，用於深度複製狀態
+import pandas as pd
 
-# --- 1. 遊戲狀態初始化 ---
-def init_game_state():
-    """返回一個乾淨的初始遊戲狀態字典"""
+# --- 1. 遊戲參數 (來自 基本參數.csv) ---
+# 這些是遊戲的 "規則"
+GLOBAL_PARAMS = {
+    'factory_cost': 5000000,
+    'factory_maintenance': 100000,
+    'factory_capacity': 4, # 條生產線
+    
+    'line_cost': 1000000,
+    'line_maintenance': 20000,
+    'line_capacity': 1000, # 單位 P1
+    
+    'raw_material_cost_R1': 100,
+    'p1_labor_cost': 50, # 每單位 P1 的人工成本
+    'p1_material_needed_R1': 1, # 每單位 P1 需 1 單位 R1
+    
+    'bank_loan_interest_rate_per_season': 0.02, # 季利率 2%
+    'emergency_loan_interest_rate': 0.05, # 現金不足的罰息
+    
+    'rd_costs_to_level_up': { # 升到下一級所需的 "累計" 投入
+        2: 500000,
+        3: 1500000, # 500k + 1M
+        4: 3500000, # 1.5M + 2M
+        5: 6500000  # 3.5M + 3M
+    }
+}
+
+# --- 2. 團隊狀態初始化 ---
+def init_team_state():
+    """定義一家公司 "出生時" 的狀態"""
     return {
-        'round': 1,
-        'budget': 2000000,
-        'morale': 55,       # 員工士氣 (滿分 100)
-        'turnover': 20,     # 關鍵人才流動率 (%)
-        'readiness': 30,    # 領導力儲備 (滿分 100)
+        # 財務
+        'cash': 10000000, # 初始現金
+        'bank_loan': 0,     # 銀行借款
         
-        'rationale_1': '',
-        'rationale_2': '',
-        'rationale_3': ''
+        # 資產
+        'factories': 1,
+        'lines': 2,
+        
+        # 庫存 (單位)
+        'inventory_R1': 5000, # 原料
+        'inventory_P1': 1000, # 產品
+        
+        # 市場
+        'rd_level_P1': 1,
+        'rd_investment_P1': 0, # 累計研發投入
+        
+        # 上一季的決策 (用於顯示在儀表板)
+        'last_price_P1': 300,
+        'last_ad_P1': 50000,
+        
+        # 上一季的結果 (用於顯示在儀表板)
+        'last_sales_units_P1': 0,
+        'last_market_share_P1': 0.0,
+        'last_revenue_P1': 0,
+        'last_profit': 0
     }
 
-def init_team_data():
-    """初始化一個團隊的完整數據，包含'當前狀態'和'歷史紀錄'"""
-    return {
-        'current': init_game_state(),
-        'history': [] # 用一個列表來儲存歷史狀態
-    }
+# --- 3. 儀表板 (Dashboard) ---
+def display_dashboard(team_key, team_data):
+    st.header(f"📈 {team_key} 儀表板 (第 {st.session_state.game_season} 季)")
+    st.subheader("財務狀況")
+    col1, col2 = st.columns(2)
+    col1.metric("🏦 現金", f"${team_data['cash']:,.0f}")
+    col2.metric("💸 銀行總借款", f"${team_data['bank_loan']:,.0f}")
 
-# --- 2. 顯示儀表板 (KPIs) ---
-def display_dashboard():
-    st.header("📈 TechNova 儀表板")
-    st.markdown("---")
-
-    # *** V4 錯誤修正 ***
-    # 檢查 game_data 狀態是否正確，如果不正確（例如缺少 'current' 鍵），
-    # 就強制重置當前團隊的狀態，以防止 KeyError。
-    if 'current' not in st.session_state.game_data or not isinstance(st.session_state.game_data, dict):
-        st.error("偵測到狀態錯誤，正在為您重置當前團隊...")
-        # st.session_state.game_data 指向的是 st.session_state.teams[selected_team]
-        # 所以我們直接重置 st.session_state.teams[selected_team]
-        
-        # 為了安全起見，我們需要知道 selected_team 是什麼
-        # 但這個函數不應該依賴 selected_team
-        # 我們在主程式碼區塊中處理這個問題
-        
-        # 這裡我們先給一個臨時值，防止儀表板徹底崩潰
-        current_state = init_game_state() 
-        st.session_state.game_data = init_team_data() # 緊急重置
-    else:
-        # 從 session_state 讀取當前團隊的 "current" 數據
-        current_state = st.session_state.game_data['current']
-
+    st.subheader("資產與庫存")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("🏦 專案預算", f"${current_state['budget']:,.0f}")
-    col2.metric("😊 員工士氣", f"{current_state['morale']}/100")
-    col3.metric("🚪 人才流動率", f"{current_state['turnover']}%")
-    col4.metric("🎓 領導力儲備", f"{current_state['readiness']}/100")
-    st.markdown("---")
+    col1.metric("🏭 工廠 (座)", team_data['factories'])
+    col2.metric("🔩 生產線 (條)", team_data['lines'])
+    col3.metric("📦 原料 R1 (單位)", f"{team_data['inventory_R1']:,.0f}")
+    col4.metric("🏭 產品 P1 (單位)", f"{team_data['inventory_P1']:,.0f}")
 
-# --- 3. 處理回合提交的邏輯 ---
-
-def save_history():
-    """在處理決策前，儲存當前狀態到歷史紀錄中"""
-    current_team_data = st.session_state.game_data
-    current_team_data['history'].append(copy.deepcopy(current_team_data['current']))
-
-# === 第一回合邏輯 ===
-def process_round_1(budget_A, budget_B, budget_C, budget_D, rationale):
-    save_history() 
-    current_state = st.session_state.game_data['current']
+    st.subheader("市場狀況")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("🔬 研發等級 (P1)", f"L {team_data['rd_level_P1']}")
+    col2.metric("💲 上季價格 (P1)", f"${team_data['last_price_P1']}")
+    col3.metric("📢 上季廣告 (P1)", f"${team_data['last_ad_P1']:,.0f}")
+    col4.metric("📊 上季市佔率 (P1)", f"{team_data['last_market_share_P1']:.2%}")
     
-    total_spent = budget_A + budget_B + budget_C + budget_D
-    
-    if total_spent > current_state['budget']:
-        st.error("錯誤：總支出已超過預算！請重新調整。")
-        st.session_state.game_data['history'].pop() 
-        return 
+    st.subheader("上季損益")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 上季營收", f"${team_data['last_revenue_P1']:,.0f}")
+    col2.metric("📈 上季銷量 (單位)", f"{team_data['last_sales_units_P1']:,.0f}")
+    col3.metric("💹 上季淨利", f"${team_data['last_profit']:,.0f}")
 
-    current_state['budget'] -= total_spent
+# --- 4. 決策表單 (Decision Form) ---
+def display_decision_form(team_key):
+    team_data = st.session_state.teams[team_key]
     
-    if budget_A > 0:
-        current_state['turnover'] -= budget_A / 100000
-        current_state['morale'] += (budget_A / 100000) * 0.5
-    if budget_B > 0:
-        current_state['readiness'] += budget_B / 50000
-    if budget_C > 0:
-        current_state['morale'] += budget_C / 40000
-    if budget_D > 0:
-        current_state['readiness'] += budget_D / 100000
-        current_state['morale'] += budget_D / 50000
+    with st.form(f"decision_form_{team_key}"):
+        st.header(f"📝 {team_key} - 第 {st.session_state.game_season} 季決策單")
         
-    current_state['rationale_1'] = rationale
-    current_state['round'] = 2
-    
-    current_state['turnover'] = max(0, round(current_state['turnover'], 1))
-    current_state['morale'] = min(100, int(current_state['morale']))
-    current_state['readiness'] = min(100, int(current_state['readiness']))
-    
-    st.success("第一回合決策已提交！儀表板已更新。")
-    st.balloons()
+        st.subheader("財務決策")
+        col1, col2 = st.columns(2)
+        decision_loan = col1.number_input("本季銀行借款", min_value=0, step=100000, value=0)
+        decision_repay = col2.number_input("本季償還貸款", min_value=0, step=100000, value=0)
+        if decision_repay > team_data['bank_loan']:
+            st.warning("償還金額超過總借款！")
 
+        st.subheader("資本決策")
+        col1, col2 = st.columns(2)
+        decision_build_factory = col1.number_input("建置新工廠 (座)", min_value=0, max_value=5, value=0)
+        decision_build_line = col2.number_input("建置新生產線 (條)", min_value=0, max_value=20, value=0)
+        total_lines = team_data['lines'] + decision_build_line
+        total_factories = team_data['factories'] + decision_build_factory
+        if total_lines > total_factories * GLOBAL_PARAMS['factory_capacity']:
+            st.error(f"生產線總數 ({total_lines}) 已超過工廠容量 ({total_factories * GLOBAL_PARAMS['factory_capacity']})！")
 
-# === 第二回合邏輯 ===
-def process_round_2(policy_choice, implementation_cost, rationale):
-    save_history() 
-    current_state = st.session_state.game_data['current']
-    
-    if implementation_cost > current_state['budget']:
-        st.error("錯誤：導入預算已超過剩餘預算！請重新調整。")
-        st.session_state.game_data['history'].pop() 
-        return
-
-    current_state['budget'] -= implementation_cost
-    impact = implementation_cost / 100000 
-
-    if policy_choice == "A. 菁英驅動":
-        current_state['turnover'] = max(0, current_state['turnover'] - (2 * impact))
-        current_state['morale'] = max(0, current_state['morale'] - (5 * impact))
-        current_state['readiness'] += (3 * impact)
-    elif policy_choice == "B. 全員賦能 (OKR)":
-        current_state['morale'] += (5 * impact)
-        current_state['readiness'] += (4 * impact)
-        current_state['turnover'] = max(0, current_state['turnover'] - (1 * impact))
-    elif policy_choice == "C. 敏捷專案制":
-        current_state['morale'] += (3 * impact)
-        current_state['readiness'] += (3 * impact)
-        current_state['turnover'] += (1 * impact)
-
-    current_state['rationale_2'] = rationale
-    current_state['round'] = 3
-    
-    current_state['turnover'] = max(0, round(current_state['turnover'], 1))
-    current_state['morale'] = min(100, int(current_state['morale']))
-    current_state['readiness'] = min(100, int(current_state['readiness']))
-    
-    st.success("第二回合決策已提交！儀表板已更新。")
-
-
-# === 第三回合邏輯 ===
-def process_round_3(crisis_choice, rationale):
-    save_history() 
-    current_state = st.session_state.game_data['current']
-
-    if crisis_choice == "A. 絕不妥協 (Counter-Offer)":
-        cost = current_state['budget'] * 0.5
-        current_state['budget'] -= int(cost)
-        current_state['turnover'] = max(0, current_state['turnover'] - 5)
-        current_state['morale'] = max(0, current_state['morale'] - 10)
-    elif crisis_choice == "B. 訴諸文化 (Internal PR)":
-        current_state['turnover'] += 3
-        current_state['morale'] += 5
-    elif crisis_choice == "C. 策略性放棄":
-        current_state['turnover'] += 10
-        current_state['readiness'] = max(0, current_state['readiness'] - 15)
-        current_state['budget'] = int(current_state['budget'] * 0.2)
+        st.subheader("生產決策")
+        col1, col2 = st.columns(2)
+        decision_buy_R1 = col1.number_input("採購原料 (R1) 單位", min_value=0, step=100, value=0)
+        decision_produce_P1 = col2.number_input("計畫生產產品 (P1) 單位", min_value=0, step=100, value=0)
+        if decision_produce_P1 > team_data['lines'] * GLOBAL_PARAMS['line_capacity']:
+            st.warning(f"計畫產量 ({decision_produce_P1}) 超過總產能 ({team_data['lines'] * GLOBAL_PARAMS['line_capacity']})！")
         
-    current_state['rationale_3'] = rationale
-    current_state['round'] = 4
+        materials_needed = decision_produce_P1 * GLOBAL_PARAMS['p1_material_needed_R1']
+        if materials_needed > team_data['inventory_R1']:
+             st.warning(f"原料不足！(需求: {materials_needed}, 現有: {team_data['inventory_R1']})")
+
+
+        st.subheader("行銷決策")
+        col1, col2 = st.columns(2)
+        decision_price_P1 = col1.slider("設定 P1 銷售價格", 100, 1000, value=300, step=10)
+        decision_ad_P1 = col2.number_input("投入 P1 廣告費用", min_value=0, step=50000, value=50000)
+
+        st.subheader("研發決策")
+        decision_rd_P1 = st.number_input("投入 P1 研發費用", min_value=0, step=100000, value=0)
+        
+        submitted = st.form_submit_button("提交本季決策")
+        
+    if submitted:
+        # 僅儲存決策，等待管理員結算
+        st.session_state.decisions[team_key] = {
+            'loan': decision_loan,
+            'repay': decision_repay,
+            'build_factory': decision_build_factory,
+            'build_line': decision_build_line,
+            'buy_R1': decision_buy_R1,
+            'produce_P1': decision_produce_P1,
+            'price_P1': decision_price_P1,
+            'ad_P1': decision_ad_P1,
+            'rd_P1': decision_rd_P1
+        }
+        st.success(f"{team_key} 第 {st.session_state.game_season} 季決策已提交！等待老師結算...")
+        st.rerun()
+
+# --- 5. 結算引擎 (The "Black Box") ---
+def run_season_calculation():
+    """
+    這是遊戲的核心引擎。它會在管理員按下按鈕後執行。
+    它會讀取所有 'st.session_state.decisions' 的數據，
+    然後更新所有 'st.session_state.teams' 的數據。
     
-    current_state['turnover'] = max(0, round(current_state['turnover'], 1))
-    current_state['morale'] = min(100, int(current_state['morale']))
-    current_state['readiness'] = min(100, int(current_state['readiness']))
+    *** V1 簡化版：尚未加入市場競爭模型 ***
+    """
     
-    st.success("最終決策已提交！競賽結束！")
-    st.balloons()
+    decisions = st.session_state.decisions
+    teams = st.session_state.teams
+    
+    # 暫存每隊的淨利，用於儀表板
+    team_profits = {}
+    
+    # === 階段 1: 支出與生產 ===
+    # (先結算所有支出和生產，因為這會影響庫存)
+    for team_key, decision in decisions.items():
+        team_data = teams[team_key]
+        
+        # 1a. 財務成本 (利息)
+        interest_cost = team_data['bank_loan'] * GLOBAL_PARAMS['bank_loan_interest_rate_per_season']
+        
+        # 1b. 維護成本
+        maint_cost = (team_data['factories'] * GLOBAL_PARAMS['factory_maintenance']) + \
+                     (team_data['lines'] * GLOBAL_PARAMS['line_maintenance'])
+                     
+        # 1c. 資本支出
+        capital_cost = (decision['build_factory'] * GLOBAL_PARAMS['factory_cost']) + \
+                       (decision['build_line'] * GLOBAL_PARAMS['line_cost'])
+                       
+        # 1d. 原料採購
+        buy_R1_cost = decision['buy_R1'] * GLOBAL_PARAMS['raw_material_cost_R1']
+        
+        # 1e. 生產 (檢查限制)
+        max_production_by_lines = team_data['lines'] * GLOBAL_PARAMS['line_capacity']
+        max_production_by_R1 = team_data['inventory_R1'] / GLOBAL_PARAMS['p1_material_needed_R1']
+        
+        actual_production = min(decision['produce_P1'], max_production_by_lines, max_production_by_R1)
+        actual_production = int(actual_production) # 確保是整數
+        
+        production_labor_cost = actual_production * GLOBAL_PARAMS['p1_labor_cost']
+        production_R1_cost = actual_production * GLOBAL_PARAMS['p1_material_needed_R1'] # 這是扣庫存
+        
+        # 1f. 行銷與研發
+        marketing_cost = decision['ad_P1'] + decision['rd_P1']
+        
+        # 1g. 總支出 (不含利息，利息是損益表項目)
+        total_cash_out = maint_cost + capital_cost + buy_R1_cost + \
+                         production_labor_cost + marketing_cost + decision['repay']
+                         
+        # 1h. 結算現金
+        team_data['cash'] -= total_cash_out
+        team_data['cash'] += decision['loan']
+        
+        # 1i. 結算資產與庫存
+        team_data['factories'] += decision['build_factory']
+        team_data['lines'] += decision['build_line']
+        team_data['inventory_R1'] += decision['buy_R1']
+        team_data['inventory_R1'] -= production_R1_cost # 扣 R1 庫存
+        team_data['inventory_P1'] += actual_production # 加 P1 庫存
+        
+        # 1j. 結算財務
+        team_data['bank_loan'] += decision['loan']
+        team_data['bank_loan'] -= decision['repay']
+        
+        # 1k. 結算研發
+        team_data['rd_investment_P1'] += decision['rd_P1']
+        current_level = team_data['rd_level_P1']
+        if current_level < 5:
+            next_level_cost = GLOBAL_PARAMS['rd_costs_to_level_up'][current_level + 1]
+            if team_data['rd_investment_P1'] >= next_level_cost:
+                team_data['rd_level_P1'] += 1
+                # (簡易版：升級後不清零，持續累計)
+        
+        # 1l. 儲存上季決策 (用於儀表板)
+        team_data['last_price_P1'] = decision['price_P1']
+        team_data['last_ad_P1'] = decision['ad_P1']
+        
+        # 暫存成本 (用於計算淨利)
+        team_profits[team_key] = {
+            'total_cost_of_goods': 0, # V1 簡化
+            'operating_expense': maint_cost + marketing_cost,
+            'interest_cost': interest_cost
+        }
+
+    # === 階段 2: 市場結算 (*** V2 才會加入的黑盒子 ***) ===
+    # V1 簡化版：假設一個超簡單的銷售
+    # 這裡未來會替換成您要的複雜競爭模型
+    st.warning("V1 結算引擎：使用簡化銷售模型 (未來將替換為競爭模型)")
+    
+    total_sales_units_all_teams = 0
+    temp_sales_data = {}
+    
+    for team_key, decision in decisions.items():
+        team_data = teams[team_key]
+        
+        # V1 假模型：價格越低、廣告越高，賣越好
+        # (這只是個占位符，不要當真)
+        sales_score = (decision['ad_P1'] / 10000) / (decision['price_P1'] / 300)
+        temp_sales_data[team_key] = sales_score
+    
+    total_score = sum(temp_sales_data.values())
+    TOTAL_MARKET_DEMAND_V1 = 50000 # V1 假設總市場需求 5 萬
+
+    for team_key, score in temp_sales_data.items():
+        team_data = teams[team_key]
+        decision = decisions[team_key]
+        
+        market_share = (score / total_score) if total_score > 0 else 0.1
+        demand_units = int(TOTAL_MARKET_DEMAND_V1 * market_share)
+        
+        # 實際銷量 = min(市場需求, 你的庫存)
+        actual_sales_units = min(demand_units, team_data['inventory_P1'])
+        
+        # 結算
+        revenue = actual_sales_units * decision['price_P1']
+        
+        team_data['cash'] += revenue
+        team_data['inventory_P1'] -= actual_sales_units
+        
+        # 更新儀表板數據
+        team_data['last_sales_units_P1'] = actual_sales_units
+        team_data['last_market_share_P1'] = market_share
+        team_data['last_revenue_P1'] = revenue
+        
+        # 計算淨利 (簡易版)
+        profit = revenue - team_profits[team_key]['operating_expense'] - team_profits[team_key]['interest_cost']
+        team_data['last_profit'] = profit
+
+    # === 階段 3: 財務結算 (檢查破產) ===
+    for team_key, team_data in teams.items():
+        if team_data['cash'] < 0:
+            # 現金不足，強制緊急貸款
+            emergency_loan = abs(team_data['cash'])
+            interest_penalty = emergency_loan * GLOBAL_PARAMS['emergency_loan_interest_rate']
+            
+            team_data['cash'] = 0 # 補足現金
+            team_data['bank_loan'] += emergency_loan # 計入總借款
+            team_data['cash'] -= interest_penalty # 扣除罰息
+            st.error(f"{team_key} 現金不足！已強制申請 ${emergency_loan:,.0f} 的緊急貸款，並支付 ${interest_penalty:,.0f} 罰息。")
+            
+            # (如果罰息又導致現金為負，在下一季會再次觸發)
+
+    # === 階段 4: 推進遊戲 ===
+    st.session_state.game_season += 1
+    st.session_state.decisions = {} # 清空本季決策，準備下一季
+    
+    st.success(f"第 {st.session_state.game_season - 1} 季結算完畢！已進入第 {st.session_state.game_season} 季。")
 
 
-# --- 4. 主應用程式 (Main App) ---
-st.set_page_config(layout="wide")
-st.title("🚀 TechNova 擴張挑戰賽 (策略性HR模擬器)")
-st.write("您是 TechNova 的人資策略團隊，請在三回合內，運用有限預算，達成公司擴張目標！")
+# --- 6. 主程式 (Main App) ---
 
-# --- 團隊選擇 ---
-team_list = [f"第 {i} 組" for i in range(1, 11)]
-selected_team = st.selectbox("請選擇您的隊伍：", team_list)
+# --- 初始化 session_state ---
+if 'game_season' not in st.session_state:
+    st.session_state.game_season = 1
+    st.session_state.teams = {} # 儲存 10 組公司的 "當前狀態"
+    st.session_state.decisions = {} # 儲存 10 組公司的 "本季決策"
+    
+team_list = [f"第 {i} 組 (公司 {i})" for i in range(1, 11)]
 
-# --- 為每個團隊建立獨立的 session_state ---
-if 'teams' not in st.session_state:
+# --- 管理員面板 (Sidebar) ---
+st.sidebar.title("👨‍🏫 管理員面板")
+st.sidebar.header(f"當前遊戲進度：第 {st.session_state.game_season} 季")
+
+# 顯示決策提交狀態
+st.sidebar.subheader("本季決策提交狀態")
+all_submitted = True
+for team in team_list:
+    if team not in st.session_state.decisions:
+        st.sidebar.warning(f"🟡 {team}: 尚未提交")
+        all_submitted = False
+    else:
+        st.sidebar.success(f"✅ {team}: 已提交")
+
+# ** 核心按鈕：結算本季 **
+if st.sidebar.button("➡️ 結算本季", disabled=not all_submitted):
+    with st.spinner("正在執行市場結算..."):
+        run_season_calculation()
+    st.rerun()
+
+if not all_submitted:
+    st.sidebar.info("需所有團隊都提交決策後，才能結算本季。")
+
+st.sidebar.markdown("---")
+if st.sidebar.button("♻️ !!! 重置整個遊戲 !!!"):
+    st.session_state.game_season = 1
     st.session_state.teams = {}
+    st.session_state.decisions = {}
+    st.success("遊戲已重置回第 1 季")
+    st.rerun()
 
-# *** V4 錯誤修正 ***
-# 確保所選團隊的數據始終存在且結構正確
+# --- 學生主畫面 (Main Screen) ---
+st.title("🚀 新星製造 (Nova Manufacturing) 挑戰賽")
+selected_team = st.selectbox("請選擇您的公司 (隊伍)：", team_list)
+
+# --- 載入或初始化該團隊的數據 ---
 if selected_team not in st.session_state.teams:
-    st.session_state.teams[selected_team] = init_team_data()
-elif not isinstance(st.session_state.teams[selected_team], dict) or 'current' not in st.session_state.teams[selected_team]:
-    st.warning(f"偵測到 {selected_team} 數據結構錯誤，已為您重置。")
-    st.session_state.teams[selected_team] = init_team_data()
+    st.session_state.teams[selected_team] = init_team_state()
 
-
-# game_data 現在指向包含 'current' 和 'history' 的完整團隊數據
-st.session_state.game_data = st.session_state.teams[selected_team]
-
+# 獲取該團隊的當前數據
+current_team_data = st.session_state.teams[selected_team]
 
 # --- 顯示儀表板 ---
-display_dashboard()
+display_dashboard(selected_team, current_team_data)
 
-# --- 遊戲主循環：根據回合顯示不同內容 ---
-current_round = st.session_state.game_data['current']['round']
+st.markdown("---")
 
-# === 第一回合 ===
-if current_round == 1:
-    st.header("第一回合：穩住陣腳 - 預算分配")
-    st.markdown(f"您的總預算為 **${st.session_state.game_data['current']['budget']:,.0f}**。請分配資源以解決眼前的問題。")
-    
-    st.subheader("A. 立即加薪計畫")
-    st.markdown("效果：快速降低流動率、小幅提升士氣。成本：高。") # (修正 V3 的 '士iq' 錯字)
-    budget_A = st.slider("A 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_a")
-    st.subheader("B. 外部主管培訓")
-    st.markdown("效果：解決領導力斷層，但見效慢。成本：中。")
-    budget_B = st.slider("B 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_b")
-    st.subheader("C. 改善辦公環境與福利")
-    st.markdown("效果：顯著提升士氣。成本：中。")
-    budget_C = st.slider("C 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_c")
-    st.subheader("D. 建立內部導師制度")
-    st.markdown("效果：長期提升領導力與士氣。成本：低。")
-    budget_D = st.slider("D 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_d")
-    
-    total_spent = budget_A + budget_B + budget_C + budget_D
-    
-    with st.form("round_1_form"):
-        st.subheader("---")
-        st.metric("本回合總支出", f"${total_spent:,.0f}")
-        
-        is_over_budget = (total_spent > st.session_state.game_data['current']['budget'])
-        if is_over_budget:
-            st.error("錯誤：總支出已超過預算！請重新調整。")
-
-        st.markdown("---")
-        st.subheader("【策略報告】")
-        rationale_1 = st.text_area("請說明您如此分配預算的『策略依據』是什麼？(500字)", height=150)
-        
-        submitted_1 = st.form_submit_button("提交第一回合決策", disabled=is_over_budget)
-
-    if submitted_1:
-        process_round_1(budget_A, budget_B, budget_C, budget_D, rationale_1)
-        st.rerun() 
-
-# === 第二回合 ===
-elif current_round == 2:
-    st.header("第二回合：績效制度革新")
-    st.markdown("第一階段的行動已產生效果。CEO 要求你們在『績效管理』上做出重大抉擇。")
-    
-    with st.form("round_2_form"):
-        policy_choice = st.radio("選擇你的核心績效策略：", 
-                                 ["A. 菁英驅動", "B. 全員賦能 (OKR)", "C. 敏捷專案制"])
-        st.markdown("""
-        * **A. 菁英驅動：** 強制排名 (Rank & Yank)。高額獎勵 A 級，淘汰 C 級。(效果：領導力提升、流動率降低，但士氣重創)
-        * **B. 全員賦能 (OKR)：** 強調輔導和持續反饋。(效果：士氣、領導力提升，流動率小幅下降)
-        * **C. 敏捷專案制：** 以團隊為單位評估。(效果：士氣、領導力提升，但初期混亂導致流動率微升)
-        """)
-        
-        implementation_cost = st.slider("請投入『制度導入預算』(用於顧問、訓練、系統)", 
-                                        0, 
-                                        st.session_state.game_data['current']['budget'], 
-                                        value=0, 
-                                        step=25000,
-                                        key=f"{selected_team}_r2_cost")
-        
-        st.markdown("---")
-        st.subheader("【策略報告】")
-        rationale_2 = st.text_area("說明你選擇此政策的理由...(500字)", height=150)
-        
-        submitted_2 = st.form_submit_button("提交第二回合決策")
-        
-    if submitted_2:
-        if implementation_cost > st.session_state.game_data['current']['budget']:
-             st.error("錯誤：導入預算已超過剩餘預算！請重新調整。")
-        else:
-            process_round_2(policy_choice, implementation_cost, rationale_2)
-            st.rerun()
-
-# === 第三回合 ===
-elif current_round == 3:
-    st.header("第三回合：危機處理")
-    st.error("【緊急事件】你的競爭對手 'CyberCorp' ...")
-    st.markdown(f"你只剩下 **${st.session_state.game_data['current']['budget']:,.0f}** 預算。必須立即反應！")
-    
-    with st.form("round_3_form"):
-        crisis_choice = st.radio("選擇你的危機應對策略：", 
-                                 ["A. 絕不妥協 (Counter-Offer)", 
-                                  "B. 訴諸文化 (Internal PR)", 
-                                  "C. 策略性放棄"],
-                                 key=f"{selected_team}_r3_choice")
-        
-        st.markdown("""
-        * **A. 絕不妥協：** 動用剩餘預算的 50% 作為「緊急留才獎金」。(效果：留住人才，但花費巨大且重傷其他員工士氣)
-        * **B. 訴諸文化：** CEO 出面強調願景和 IPO 潛力。(效果：不花錢，但可能還是會走 30% 的人，留下的更團結)
-        * **C. 策略性放棄：** 讓他們走。將 80% 剩餘預算投入「緊急招聘」。(效果：10 人全走，領導力大失血，但加速補充新血)
-        """)
-        st.markdown("---")
-        st.subheader("【最終報告】")
-        rationale_3 = st.text_area("說明你此決策的考量...(500字)", height=150)
-        
-        submitted_3 = st.form_submit_button("提交最終決策")
-        
-    if submitted_3:
-        process_round_3(crisis_choice, rationale_3)
-        st.rerun()
-
-# === 遊戲結束 ===
-elif current_round == 4:
-    st.header(f"🏁 競賽結束 - {selected_team} 的最終成績單")
-    st.markdown("感謝你們的努力！以下是你們的最終儀表板狀態。請準備口頭報告。")
-    
-    current_state = st.session_state.game_data['current']
-    final_score = (current_state['morale'] * 1.5) + \
-                  (current_state['readiness'] * 2) - \
-                  (current_state['turnover'] * 3) + \
-                  (current_state['budget'] / 10000)
-    
-    st.subheader(f"綜合策略指數: {int(final_score)}")
-    
-    st.markdown("---")
-    st.subheader("您的策略報告回顧：")
-    
-    with st.expander("第一回合報告"):
-        st.write(current_state['rationale_1'])
-    with st.expander("第二回合報告"):
-        st.write(current_state['rationale_2'])
-    with st.expander("第三回合報告"):
-        st.write(current_state['rationale_3'])
-
-
-# --- 5. 重置按鈕 (*** V4 修正 ***) ---
-st.sidebar.title("👨‍🏫 管理員面板")
-
-# *** 修正：按鈕 1 - 撤銷上一回合 ***
-if st.sidebar.button("🔙 撤銷上一回合 (Undo)"):
-    current_team_data = st.session_state.game_data
-    if not current_team_data['history']:
-        st.sidebar.error("沒有上一步可供撤銷！")
-        st.rerun() # <-- *** V4 新增 *** 即使失敗也要 rerun，防止按鈕卡住
-    else:
-        previous_state = current_team_data['history'].pop()
-        current_team_data['current'] = previous_state
-        st.sidebar.success("已恢復至上一回合。")
-        st.rerun()
-
-# *** 按鈕 2 - 重置遊戲 ***
-if st.sidebar.button(f"♻️ 重置 {selected_team} 的遊戲 (Reset)"):
-    st.session_state.teams[selected_team] = init_team_data()
-    st.sidebar.success(f"{selected_team} 的進度已重置。")
-    st.rerun()
-
-# *** 按鈕 3 - 重置所有 ***
-if st.sidebar.button("!!! (重置所有團隊進度) !!!"):
-    st.session_state.teams = {}
-    st.sidebar.success("所有團隊進度均已重置。")
-    st.rerun()
+# --- 顯示決策表單或等待畫面 ---
+if selected_team in st.session_state.decisions:
+    st.info(f"您已提交第 {st.session_state.game_season} 季的決策，請等待老師結算...")
+    # (可以考慮顯示一個 '撤銷提交' 的按鈕，但 V1 先不加)
+else:
+    display_decision_form(selected_team)
+```
