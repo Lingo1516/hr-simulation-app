@@ -1,6 +1,7 @@
-# app.py (最終修正版 - V3)
-# 根據用戶建議，增加「撤銷上一回合 (Undo)」功能
-# 將「重置」按鈕區分為「撤銷 (Undo)」和「遊戲重置 (Reset)」
+# app.py (最終修正版 - V4)
+# 修正 V3 的 KeyError: 'current'
+# 1. 增加「防禦性」程式碼到 display_dashboard()
+# 2. 修正 Undo 邏輯，在失敗時也 rerun
 
 import streamlit as st
 import copy # 引入 copy 模組，用於深度複製狀態
@@ -15,7 +16,6 @@ def init_game_state():
         'turnover': 20,     # 關鍵人才流動率 (%)
         'readiness': 30,    # 領導力儲備 (滿分 100)
         
-        # 用來儲存學生的質化報告
         'rationale_1': '',
         'rationale_2': '',
         'rationale_3': ''
@@ -32,9 +32,25 @@ def init_team_data():
 def display_dashboard():
     st.header("📈 TechNova 儀表板")
     st.markdown("---")
-    
-    # 從 session_state 讀取當前團隊的 "current" 數據
-    current_state = st.session_state.game_data['current']
+
+    # *** V4 錯誤修正 ***
+    # 檢查 game_data 狀態是否正確，如果不正確（例如缺少 'current' 鍵），
+    # 就強制重置當前團隊的狀態，以防止 KeyError。
+    if 'current' not in st.session_state.game_data or not isinstance(st.session_state.game_data, dict):
+        st.error("偵測到狀態錯誤，正在為您重置當前團隊...")
+        # st.session_state.game_data 指向的是 st.session_state.teams[selected_team]
+        # 所以我們直接重置 st.session_state.teams[selected_team]
+        
+        # 為了安全起見，我們需要知道 selected_team 是什麼
+        # 但這個函數不應該依賴 selected_team
+        # 我們在主程式碼區塊中處理這個問題
+        
+        # 這裡我們先給一個臨時值，防止儀表板徹底崩潰
+        current_state = init_game_state() 
+        st.session_state.game_data = init_team_data() # 緊急重置
+    else:
+        # 從 session_state 讀取當前團隊的 "current" 數據
+        current_state = st.session_state.game_data['current']
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("🏦 專案預算", f"${current_state['budget']:,.0f}")
@@ -48,19 +64,18 @@ def display_dashboard():
 def save_history():
     """在處理決策前，儲存當前狀態到歷史紀錄中"""
     current_team_data = st.session_state.game_data
-    # 使用 deepcopy 確保儲存的是一個獨立的複本
     current_team_data['history'].append(copy.deepcopy(current_team_data['current']))
 
 # === 第一回合邏輯 ===
 def process_round_1(budget_A, budget_B, budget_C, budget_D, rationale):
-    save_history() # *** 新增：儲存 R1 開始前的狀態 ***
+    save_history() 
     current_state = st.session_state.game_data['current']
     
     total_spent = budget_A + budget_B + budget_C + budget_D
     
     if total_spent > current_state['budget']:
         st.error("錯誤：總支出已超過預算！請重新調整。")
-        st.session_state.game_data['history'].pop() # 如果出錯，移除剛剛存的歷史
+        st.session_state.game_data['history'].pop() 
         return 
 
     current_state['budget'] -= total_spent
@@ -89,12 +104,12 @@ def process_round_1(budget_A, budget_B, budget_C, budget_D, rationale):
 
 # === 第二回合邏輯 ===
 def process_round_2(policy_choice, implementation_cost, rationale):
-    save_history() # *** 新增：儲存 R2 開始前的狀態 ***
+    save_history() 
     current_state = st.session_state.game_data['current']
     
     if implementation_cost > current_state['budget']:
         st.error("錯誤：導入預算已超過剩餘預算！請重新調整。")
-        st.session_state.game_data['history'].pop() # 如果出錯，移除剛剛存的歷史
+        st.session_state.game_data['history'].pop() 
         return
 
     current_state['budget'] -= implementation_cost
@@ -125,7 +140,7 @@ def process_round_2(policy_choice, implementation_cost, rationale):
 
 # === 第三回合邏輯 ===
 def process_round_3(crisis_choice, rationale):
-    save_history() # *** 新增：儲存 R3 開始前的狀態 ***
+    save_history() 
     current_state = st.session_state.game_data['current']
 
     if crisis_choice == "A. 絕不妥協 (Counter-Offer)":
@@ -161,12 +176,18 @@ st.write("您是 TechNova 的人資策略團隊，請在三回合內，運用有
 team_list = [f"第 {i} 組" for i in range(1, 11)]
 selected_team = st.selectbox("請選擇您的隊伍：", team_list)
 
-# --- 為每個團隊建立獨立的 session_state (*** 結構已修改 ***) ---
+# --- 為每個團隊建立獨立的 session_state ---
 if 'teams' not in st.session_state:
     st.session_state.teams = {}
 
+# *** V4 錯誤修正 ***
+# 確保所選團隊的數據始終存在且結構正確
 if selected_team not in st.session_state.teams:
-    st.session_state.teams[selected_team] = init_team_data() # 使用新的初始化函數
+    st.session_state.teams[selected_team] = init_team_data()
+elif not isinstance(st.session_state.teams[selected_team], dict) or 'current' not in st.session_state.teams[selected_team]:
+    st.warning(f"偵測到 {selected_team} 數據結構錯誤，已為您重置。")
+    st.session_state.teams[selected_team] = init_team_data()
+
 
 # game_data 現在指向包含 'current' 和 'history' 的完整團隊數據
 st.session_state.game_data = st.session_state.teams[selected_team]
@@ -184,7 +205,7 @@ if current_round == 1:
     st.markdown(f"您的總預算為 **${st.session_state.game_data['current']['budget']:,.0f}**。請分配資源以解決眼前的問題。")
     
     st.subheader("A. 立即加薪計畫")
-    st.markdown("效果：快速降低流動率、小幅提升士iq。成本：高。")
+    st.markdown("效果：快速降低流動率、小幅提升士氣。成本：高。") # (修正 V3 的 '士iq' 錯字)
     budget_A = st.slider("A 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_a")
     st.subheader("B. 外部主管培訓")
     st.markdown("效果：解決領導力斷層，但見效慢。成本：中。")
@@ -224,7 +245,11 @@ elif current_round == 2:
     with st.form("round_2_form"):
         policy_choice = st.radio("選擇你的核心績效策略：", 
                                  ["A. 菁英驅動", "B. 全員賦能 (OKR)", "C. 敏捷專案制"])
-        st.markdown("""... (說明文字) ...""")
+        st.markdown("""
+        * **A. 菁英驅動：** 強制排名 (Rank & Yank)。高額獎勵 A 級，淘汰 C 級。(效果：領導力提升、流動率降低，但士氣重創)
+        * **B. 全員賦能 (OKR)：** 強調輔導和持續反饋。(效果：士氣、領導力提升，流動率小幅下降)
+        * **C. 敏捷專案制：** 以團隊為單位評估。(效果：士氣、領導力提升，但初期混亂導致流動率微升)
+        """)
         
         implementation_cost = st.slider("請投入『制度導入預算』(用於顧問、訓練、系統)", 
                                         0, 
@@ -259,7 +284,11 @@ elif current_round == 3:
                                   "C. 策略性放棄"],
                                  key=f"{selected_team}_r3_choice")
         
-        st.markdown("""... (說明文字) ...""")
+        st.markdown("""
+        * **A. 絕不妥協：** 動用剩餘預算的 50% 作為「緊急留才獎金」。(效果：留住人才，但花費巨大且重傷其他員工士氣)
+        * **B. 訴諸文化：** CEO 出面強調願景和 IPO 潛力。(效果：不花錢，但可能還是會走 30% 的人，留下的更團結)
+        * **C. 策略性放棄：** 讓他們走。將 80% 剩餘預算投入「緊急招聘」。(效果：10 人全走，領導力大失血，但加速補充新血)
+        """)
         st.markdown("---")
         st.subheader("【最終報告】")
         rationale_3 = st.text_area("說明你此決策的考量...(500字)", height=150)
@@ -294,24 +323,23 @@ elif current_round == 4:
         st.write(current_state['rationale_3'])
 
 
-# --- 5. 重置按鈕 (*** 這裡已修改 ***) ---
+# --- 5. 重置按鈕 (*** V4 修正 ***) ---
 st.sidebar.title("👨‍🏫 管理員面板")
 
-# *** 新增：按鈕 1 - 撤銷上一回合 ***
+# *** 修正：按鈕 1 - 撤銷上一回合 ***
 if st.sidebar.button("🔙 撤銷上一回合 (Undo)"):
     current_team_data = st.session_state.game_data
     if not current_team_data['history']:
         st.sidebar.error("沒有上一步可供撤銷！")
+        st.rerun() # <-- *** V4 新增 *** 即使失敗也要 rerun，防止按鈕卡住
     else:
-        # 從 history 列表中 'pop' 出最後一個狀態，並覆蓋 'current'
         previous_state = current_team_data['history'].pop()
         current_team_data['current'] = previous_state
         st.sidebar.success("已恢復至上一回合。")
         st.rerun()
 
-# *** 修改：按鈕 2 - 重置遊戲 ***
+# *** 按鈕 2 - 重置遊戲 ***
 if st.sidebar.button(f"♻️ 重置 {selected_team} 的遊戲 (Reset)"):
-    # 重置為全新的初始狀態
     st.session_state.teams[selected_team] = init_team_data()
     st.sidebar.success(f"{selected_team} 的進度已重置。")
     st.rerun()
