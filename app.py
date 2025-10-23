@@ -1,12 +1,11 @@
-# app.py (Nova Manufacturing Sim - V2-Framework-V1)
+# -*- coding: utf-8 -*-
+# ^^^ 這一行就是修復亂碼的 "魔法指令" ^^^
+
+# app.py (Nova Manufacturing Sim - V2-Framework-V1.1)
 # 執行方式: streamlit run app.py
-# 
-# 這是 V2 的基礎框架，已包含：
-# 1. 雙產品 (P1, P2) 和雙原料 (R1, R2)
-# 2. 專屬生產線 (Line_P1, Line_P2)
-# 3. 完整的決策表單
-# 4. 完整的財報儀表板 (損益表、資產負債表)
-# 5. 簡化版的結算引擎 (V1 - 尚未加入市場競爭模型)
+#
+# V1.1 更新：
+# 1. 在最頂部加入 "# -*- coding: utf-8 -*-" 來強制修復中文亂碼問題。
 
 import streamlit as st
 import pandas as pd
@@ -522,7 +521,7 @@ def run_season_calculation():
         bs['total_liabilities_and_equity'] = bs['bank_loan'] + bs['shareholder_equity']
         
         # (V1 簡化版：如果 BS 不平衡，強制平衡，真實版 V2 必須修到平衡)
-        if bs['total_assets'] != bs['total_liabilities_and_equity']:
+        if abs(bs['total_assets'] - bs['total_liabilities_and_equity']) > 10: # 允許 10 元內的浮點數誤差
             diff = bs['total_assets'] - bs['total_liabilities_and_equity']
             bs['shareholder_equity'] += diff # 用權益來強制平衡 (V1 簡易做法)
             bs['total_liabilities_and_equity'] = bs['total_assets']
