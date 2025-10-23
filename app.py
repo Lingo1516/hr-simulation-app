@@ -1,4 +1,4 @@
-# app.py
+# app.py (已修正版本)
 # 執行方式: streamlit run app.py
 
 import streamlit as st
@@ -215,7 +215,7 @@ if current_round == 1:
 
     if submitted_1:
         process_round_1(budget_A, budget_B, budget_C, budget_D, rationale_1)
-        st.experimental_rerun() # 提交後重新整理頁面
+        st.rerun() # 提交後重新整理頁面
 
 # === 第二回合 ===
 elif current_round == 2:
@@ -247,7 +247,7 @@ elif current_round == 2:
         
     if submitted_2:
         process_round_2(policy_choice, implementation_cost, rationale_2)
-        st.experimental_rerun()
+        st.rerun()
 
 # === 第三回合 ===
 elif current_round == 3:
@@ -275,7 +275,7 @@ elif current_round == 3:
         
     if submitted_3:
         process_round_3(crisis_choice, rationale_3)
-        st.experimental_rerun()
+        st.rerun()
 
 # === 遊戲結束 ===
 elif current_round == 4:
@@ -305,8 +305,8 @@ elif current_round == 4:
 st.sidebar.title("管理員面板")
 if st.sidebar.button(f"重置 {selected_team} 的進度"):
     st.session_state.teams[selected_team] = init_game_state()
-    st.experimental_rerun()
+    st.rerun()
 
 if st.sidebar.button("!!! 重置所有團隊進度 !!!"):
     st.session_state.teams = {}
-    st.experimental_rerun()
+    st.rerun()
