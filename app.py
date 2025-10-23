@@ -1,4 +1,4 @@
-# app.py (已修正版本)
+# app.py (已修正版本 2 - 解決總支出更新問題)
 # 執行方式: streamlit run app.py
 
 import streamlit as st
@@ -163,16 +163,12 @@ team_list = [f"第 {i} 組" for i in range(1, 11)]
 selected_team = st.selectbox("請選擇您的隊伍：", team_list)
 
 # --- 為每個團隊建立獨立的 session_state ---
-# 這是關鍵：我們把每個團隊的數據存在一個總的 st.session_state['teams'] 字典中
 if 'teams' not in st.session_state:
     st.session_state.teams = {}
 
-# 如果該團隊是第一次登入，為他們初始化
 if selected_team not in st.session_state.teams:
     st.session_state.teams[selected_team] = init_game_state()
 
-# 將當前選定團隊的數據，連結到一個方便的變數 `st.session_state.game_data`
-# 這樣，我們之後的程式碼都可以只操作 `st.session_state.game_data`
 st.session_state.game_data = st.session_state.teams[selected_team]
 
 
@@ -182,46 +178,60 @@ display_dashboard()
 # --- 遊戲主循環：根據回合顯示不同內容 ---
 current_round = st.session_state.game_data['round']
 
-# === 第一回合 ===
+# === 第一回合 (*** 這裡已修正 ***) ===
 if current_round == 1:
     st.header("第一回合：穩住陣腳 - 預算分配")
     st.markdown(f"您的總預算為 **${st.session_state.game_data['budget']:,.0f}**。請分配資源以解決眼前的問題。")
     
+    # --- 1. 將滑桿移出 Form ---
+    st.subheader("A. 立即加薪計畫")
+    st.markdown("效果：快速降低流動率、小幅提升士氣。成本：高。")
+    budget_A = st.slider("A 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_a")
+
+    st.subheader("B. 外部主管培訓")
+    st.markdown("效果：解決領導力斷層，但見效慢。成本：中。")
+    budget_B = st.slider("B 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_b")
+
+    st.subheader("C. 改善辦公環境與福利")
+    st.markdown("效果：顯著提升士氣。成本：中。")
+    budget_C = st.slider("C 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_c")
+    
+    st.subheader("D. 建立內部導師制度")
+    st.markdown("效果：長期提升領導力與士氣。成本：低。")
+    budget_D = st.slider("D 預算", 0, 2000000, value=0, step=50000, key=f"{selected_team}_r1_d")
+    
+    # --- 2. 即時計算總支出 ---
+    total_spent = budget_A + budget_B + budget_C + budget_D
+    
+    # --- 3. 建立 Form (只包含需要"提交"的按鈕) ---
     with st.form("round_1_form"):
-        st.subheader("A. 立即加薪計畫")
-        st.markdown("效果：快速降低流動率、小幅提升士氣。成本：高。")
-        budget_A = st.slider("A 預算", 0, 2000000, value=0, step=50000)
-
-        st.subheader("B. 外部主管培訓")
-        st.markdown("效果：解決領導力斷層，但見效慢。成本：中。")
-        budget_B = st.slider("B 預算", 0, 2000000, value=0, step=50000)
-
-        st.subheader("C. 改善辦公環境與福利")
-        st.markdown("效果：顯著提升士氣。成本：中。")
-        budget_C = st.slider("C 預算", 0, 2000000, value=0, step=50000)
-        
-        st.subheader("D. 建立內部導師制度")
-        st.markdown("效果：長期提升領導力與士氣。成本：低。")
-        budget_D = st.slider("D 預算", 0, 2000000, value=0, step=50000)
-        
-        total_spent = budget_A + budget_B + budget_C + budget_D
+        # 在 Form 內部顯示即時的總支出
+        st.subheader("---")
         st.metric("本回合總支出", f"${total_spent:,.0f}")
         
+        # 即時檢查是否超支
+        is_over_budget = (total_spent > st.session_state.game_data['budget'])
+        if is_over_budget:
+            st.error("錯誤：總支出已超過預算！請重新調整。")
+
         st.markdown("---")
         st.subheader("【策略報告】")
         rationale_1 = st.text_area("請說明您如此分配預算的『策略依據』是什麼？(500字)", height=150)
         
-        submitted_1 = st.form_submit_button("提交第一回合決策")
+        # 提交按鈕 (如果超支，則 'disabled' = True)
+        submitted_1 = st.form_submit_button("提交第一回合決策", disabled=is_over_budget)
 
+    # --- 4. 提交後的處理邏輯 (不變) ---
     if submitted_1:
         process_round_1(budget_A, budget_B, budget_C, budget_D, rationale_1)
-        st.rerun() # 提交後重新整理頁面
+        st.rerun() 
 
 # === 第二回合 ===
 elif current_round == 2:
     st.header("第二回合：績效制度革新")
     st.markdown("第一階段的行動已產生效果。CEO 要求你們在『績效管理』上做出重大抉擇。")
     
+    # (注意：第二回合的設計沒有即時總支出，所以放 Form 內部是 OK 的)
     with st.form("round_2_form"):
         policy_choice = st.radio("選擇你的核心績效策略：", 
                                  ["A. 菁英驅動", "B. 全員賦能 (OKR)", "C. 敏捷專案制"])
@@ -246,8 +256,12 @@ elif current_round == 2:
         submitted_2 = st.form_submit_button("提交第二回合決策")
         
     if submitted_2:
-        process_round_2(policy_choice, implementation_cost, rationale_2)
-        st.rerun()
+        # (這裡檢查超支，因為是在提交後才獲取 'implementation_cost' 的值)
+        if implementation_cost > st.session_state.game_data['budget']:
+             st.error("錯誤：導入預算已超過剩餘預算！請重新調整。")
+        else:
+            process_round_2(policy_choice, implementation_cost, rationale_2)
+            st.rerun()
 
 # === 第三回合 ===
 elif current_round == 3:
