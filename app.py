@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V3.4 - Calculation Stability)
+# app.py (Nova Manufacturing Sim - V2-Framework-V3.5 - Ultimate Calc Stability)
 #
-# V3.4 更新：
-# 1. (穩定性) 在結算引擎的市場計算部分，加入強制數值檢查 (.get() + isinstance)，
-#    防止因 price 或 ad 意外變為 None 而導致 TypeError。
+# V3.5 更新：
+# 1. (根本性修正) 在結算引擎的市場計算和營收計算中，
+#    於【每一行】實際執行數學運算【之前】，都強制進行數值檢查和預設值賦予，
+#    最大限度防止 TypeError: NoneType。
 
 import streamlit as st
 import pandas as pd
@@ -135,54 +136,68 @@ def display_decision_form(team_key):
             st.session_state.decisions = all_decisions # V3.3
             st.success(...) ; st.rerun()
 
-# --- 6. 結算引擎 (*** V3.4 強化數值穩定性 ***) ---
+# --- 6. 結算引擎 (*** V3.5 終極數值穩定 ***) ---
 def run_season_calculation():
-    """V3.4 結算引擎，優先讀取檔案狀態 + 研發穩定性 + 市場計算穩定性"""
+    """V3.5 結算引擎，優先讀取檔案狀態 + 研發穩定性 + 市場計算穩定性"""
 
     teams = st.session_state.teams
     current_decisions_from_file = load_decisions_from_file() # 必定讀檔
     st.session_state.decisions = current_decisions_from_file # 同步 state
     final_decisions = {}
 
-    for team_key in team_list: # V3.0 確保所有隊伍都被處理
+    # V3.5 使用初始值作為更安全的預設
+    DEFAULT_PRICE_P1 = 300
+    DEFAULT_AD_P1 = 50000
+    DEFAULT_PRICE_P2 = 450
+    DEFAULT_AD_P2 = 50000
+
+    for team_key in team_list:
         if team_key not in teams: st.session_state.teams[team_key] = init_team_state(team_key)
         team_data = teams[team_key]
         if team_key in current_decisions_from_file:
             final_decisions[team_key] = current_decisions_from_file[team_key]
         else: # 預設懲罰
             st.warning(f"警告：{team_data['team_name']} ({team_key}) 未提交決策，將使用預設。")
-            final_decisions[team_key] = { # (預設值同 V3.3)
-                'price_p1': team_data['MR']['price_p1'], 'ad_p1': team_data['MR']['ad_p1'],
-                'price_p2': team_data['MR']['price_p2'], 'ad_p2': team_data['MR']['ad_p2'],
+            final_decisions[team_key] = {
+                'price_p1': team_data['MR'].get('price_p1', DEFAULT_PRICE_P1), # 使用 get 防禦
+                'ad_p1': team_data['MR'].get('ad_p1', DEFAULT_AD_P1),
+                'price_p2': team_data['MR'].get('price_p2', DEFAULT_PRICE_P2),
+                'ad_p2': team_data['MR'].get('ad_p2', DEFAULT_AD_P2),
                 'rd_p1': 0, 'rd_p2': 0, 'produce_p1': 0, 'produce_p2': 0,
                 'buy_r1': 0, 'buy_r2': 0, 'build_factory': 0,
                 'build_line_p1': 0, 'build_line_p2': 0, 'loan': 0, 'repay': 0
             }
 
     # === 階段 1: 結算支出、生產、研發 (V3.2 修正) ===
-    for team_key, decision in final_decisions.items(): # ... (結算邏輯同 V3.2, 含研發檢查) ...
+    # (此階段邏輯與 V3.2 相同，包含研發檢查)
+    for team_key, decision in final_decisions.items(): # ... (結算邏輯同 V3.2) ...
         team_data['IS'] = is_data # 存回 state
 
-    # === 階段 2: 市場結算 (*** V3.4 強化數值檢查 ***) ===
+    # === 階段 2: 市場結算 (*** V3.5 終極數值穩定 ***) ===
     st.warning("V1 結算引擎：使用簡化銷售模型 (未來將替換為競爭模型)")
 
     # --- P1 市場 ---
     market_p1_data = {}
     total_score_p1 = 0
-    DEFAULT_PRICE_P1 = 300 # V3.4 預設價格
     for key, d in final_decisions.items():
-        # --- V3.4 強制數值檢查 ---
-        ad_p1 = d.get('ad_p1', 0)
-        price_p1 = d.get('price_p1', DEFAULT_PRICE_P1)
-        if not isinstance(ad_p1, (int, float)):
-            st.warning(f"偵測到 {key} P1 廣告費異常({ad_p1})，已設為 0。")
-            ad_p1 = 0
-        if not isinstance(price_p1, (int, float)) or price_p1 <= 0:
-            st.warning(f"偵測到 {key} P1 價格異常({price_p1})，已設為 ${DEFAULT_PRICE_P1}。")
-            price_p1 = DEFAULT_PRICE_P1
-        # --- 檢查結束 ---
+        score = 0 # 預設分數
+        if isinstance(d, dict): # 確保 d 是字典
+            # --- V3.5 在每次計算前強制檢查 ---
+            ad_p1 = d.get('ad_p1', DEFAULT_AD_P1)
+            price_p1 = d.get('price_p1', DEFAULT_PRICE_P1)
+            if not isinstance(ad_p1, (int, float)): ad_p1 = DEFAULT_AD_P1
+            if not isinstance(price_p1, (int, float)) or price_p1 <= 0: price_p1 = DEFAULT_PRICE_P1
+            # --- 檢查完畢 ---
+            try:
+                # 使用檢查/修正後的值
+                score = (ad_p1 / 10000) / (price_p1 / DEFAULT_PRICE_P1)
+            except Exception as e:
+                st.error(f"計算 {key} P1 市場分數時出錯: {e}")
+                score = 0 # 出錯則分數為 0
+        else:
+             st.error(f"處理 {key} P1 市場數據時發現結構錯誤。")
+             score = 0
 
-        score = (ad_p1 / 10000) / (price_p1 / DEFAULT_PRICE_P1) # 使用預設價格作為基準
         market_p1_data[key] = score
         total_score_p1 += score
 
@@ -192,11 +207,13 @@ def run_season_calculation():
         market_share = (score / total_score_p1) if total_score_p1 > 0 else (1/len(teams))
         demand_units = int(TOTAL_MARKET_DEMAND_P1 * market_share)
         actual_sales_units = min(demand_units, team_data['inventory_P1_units'])
-        # --- V3.4 使用檢查過的 price_p1 ---
-        price_p1 = decision.get('price_p1', DEFAULT_PRICE_P1) # 再次獲取 (或使用已檢查的也行)
+
+        # --- V3.5 在計算營收前強制檢查 ---
+        price_p1 = decision.get('price_p1', DEFAULT_PRICE_P1)
         if not isinstance(price_p1, (int, float)) or price_p1 <= 0: price_p1 = DEFAULT_PRICE_P1
         revenue = actual_sales_units * price_p1
-        # --- 修改結束 ---
+        # --- 檢查完畢 ---
+
         team_data['BS']['cash'] += revenue
         team_data['inventory_P1_units'] -= actual_sales_units
         team_data['IS']['revenue_p1'] = revenue
@@ -205,20 +222,24 @@ def run_season_calculation():
     # --- P2 市場 ---
     market_p2_data = {}
     total_score_p2 = 0
-    DEFAULT_PRICE_P2 = 450 # V3.4 預設價格
     for key, d in final_decisions.items():
-        # --- V3.4 強制數值檢查 ---
-        ad_p2 = d.get('ad_p2', 0)
-        price_p2 = d.get('price_p2', DEFAULT_PRICE_P2)
-        if not isinstance(ad_p2, (int, float)):
-            st.warning(f"偵測到 {key} P2 廣告費異常({ad_p2})，已設為 0。")
-            ad_p2 = 0
-        if not isinstance(price_p2, (int, float)) or price_p2 <= 0:
-            st.warning(f"偵測到 {key} P2 價格異常({price_p2})，已設為 ${DEFAULT_PRICE_P2}。")
-            price_p2 = DEFAULT_PRICE_P2
-        # --- 檢查結束 ---
+        score = 0
+        if isinstance(d, dict):
+            # --- V3.5 在每次計算前強制檢查 ---
+            ad_p2 = d.get('ad_p2', DEFAULT_AD_P2)
+            price_p2 = d.get('price_p2', DEFAULT_PRICE_P2)
+            if not isinstance(ad_p2, (int, float)): ad_p2 = DEFAULT_AD_P2
+            if not isinstance(price_p2, (int, float)) or price_p2 <= 0: price_p2 = DEFAULT_PRICE_P2
+            # --- 檢查完畢 ---
+            try:
+                score = (ad_p2 / 10000) / (price_p2 / DEFAULT_PRICE_P2)
+            except Exception as e:
+                st.error(f"計算 {key} P2 市場分數時出錯: {e}")
+                score = 0
+        else:
+             st.error(f"處理 {key} P2 市場數據時發現結構錯誤。")
+             score = 0
 
-        score = (ad_p2 / 10000) / (price_p2 / DEFAULT_PRICE_P2) # 使用預設價格作為基準
         market_p2_data[key] = score
         total_score_p2 += score
 
@@ -228,11 +249,13 @@ def run_season_calculation():
         market_share = (score / total_score_p2) if total_score_p2 > 0 else (1/len(teams))
         demand_units = int(TOTAL_MARKET_DEMAND_P2 * market_share)
         actual_sales_units = min(demand_units, team_data['inventory_P2_units'])
-        # --- V3.4 使用檢查過的 price_p2 ---
-        price_p2 = decision.get('price_p2', DEFAULT_PRICE_P2) # 再次獲取
+
+        # --- V3.5 在計算營收前強制檢查 ---
+        price_p2 = decision.get('price_p2', DEFAULT_PRICE_P2)
         if not isinstance(price_p2, (int, float)) or price_p2 <= 0: price_p2 = DEFAULT_PRICE_P2
         revenue = actual_sales_units * price_p2
-        # --- 修改結束 ---
+        # --- 檢查完畢 ---
+
         team_data['BS']['cash'] += revenue
         team_data['inventory_P2_units'] -= actual_sales_units
         team_data['IS']['revenue_p2'] = revenue
@@ -263,7 +286,7 @@ def calculate_company_value(bs_data):
 def display_admin_dashboard():
     """顯示老師的控制台畫面"""
     st.header(f"👨‍🏫 管理員控制台 (第 {st.session_state.game_season} 季)")
-    
+
     # --- 學生密碼總覽 ---
     with st.expander("🔑 學生密碼總覽"): # ... (內容同 V3.2) ...
     # --- 修改團隊數據 ---
@@ -275,7 +298,7 @@ def display_admin_dashboard():
     # --- C. 控制按鈕 (V2.8 修改重置邏輯) ---
     st.subheader("遊戲控制") # ... (內容同 V3.2) ...
 
-# --- 8. 主程式 (Main App) (V3.3 強化初始化和學生畫面) ---
+# --- 8. 主程式 (Main App) (V3.3 強化) ---
 st.set_page_config(layout="wide")
 
 # --- 初始化 session_state ---
