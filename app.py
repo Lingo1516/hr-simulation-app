@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V1.2)
+# app.py (Nova Manufacturing Sim - V2-Framework-V2.0)
 #
-# V1.2 更新：
-# 1. (使用者要求) 移除 "結算本季" 按鈕的 'disabled' 屬性，老師可隨時強制結算。
-# 2. 新增「未提交者」的懲罰機制：在結算時，未提交者將自動套用預設決策 (0投入，沿用上季價格/廣告)。
+# V2.0 重大架構更新：
+# 1. (使用者要求) 建立「老師」vs「學生」的獨立畫面。
+# 2. (使用者要求) 新增「密碼登入系統」，區分老師和 10 個組別。
+# 3. (使用者要求) 在「管理員控制台」新增「排行榜」(依公司總價值)。
+# 4. (使用者要求) 在「學生決策單」中新增「策略提示」。
+# 5. (解惑) "實際銷售量為0" 是因為顯示的是上一季(第0季)的數據。
 
 import streamlit as st
 import pandas as pd
 import copy
 
 # --- 1. 遊戲參數 (V2 升級版) ---
-# (此處程式碼與上一版 V1.1 相同，故省略... 
-#  在您複製時，請確保 V1.1 的這整段 GLOBAL_PARAMS 都被複製)
 GLOBAL_PARAMS = {
     'factory_cost': 5000000,
     'factory_maintenance': 100000,
@@ -38,13 +39,26 @@ GLOBAL_PARAMS = {
     }
 }
 
-# --- 2. 團隊狀態初始化 (V2 升級版) ---
+# --- 2. (V2.0 新增) 密碼系統 ---
+# (您可以自行修改密碼)
+PASSWORDS = {
+    "admin": "admin123", # 老師的密碼
+    "第 1 組": "team1",
+    "第 2 組": "team2",
+    "第 3 組": "team3",
+    "第 4 組": "team4",
+    "第 5 組": "team5",
+    "第 6 組": "team6",
+    "第 7 組": "team7",
+    "第 8 組": "team8",
+    "第 9 組": "team9",
+    "第 10 組": "team10"
+}
+team_list = [f"第 {i} 組" for i in range(1, 11)]
+
+# --- 3. 團隊狀態初始化 (V2 升級版) ---
 def init_team_state():
     """定義一家公司 "出生時" 的狀態 (V2)"""
-    
-    # (此處程式碼與上一版 V1.1 相同，故省略... 
-    #  在您複製時，請確保 V1.1 的這整段 init_team_state() 都被複製)
-    # 初始資產
     initial_cash = 10000000
     initial_factories = 1
     initial_lines_p1 = 1
@@ -54,7 +68,6 @@ def init_team_state():
     initial_inv_p1 = 500
     initial_inv_p2 = 500
     
-    # 初始資產價值 (用於資產負債表)
     cogs_p1 = GLOBAL_PARAMS['raw_material_cost_R1'] * GLOBAL_PARAMS['p1_material_needed_R1'] + GLOBAL_PARAMS['p1_labor_cost']
     cogs_p2 = GLOBAL_PARAMS['raw_material_cost_R2'] * GLOBAL_PARAMS['p2_material_needed_R2'] + GLOBAL_PARAMS['p2_labor_cost']
     inv_value = (initial_inv_r1 * GLOBAL_PARAMS['raw_material_cost_R1']) + \
@@ -95,10 +108,8 @@ def init_team_state():
     }
 
 
-# --- 3. 儀表板 (Dashboard V2) ---
+# --- 4. 儀表板 (Dashboard V2) ---
 def display_dashboard(team_key, team_data):
-    """(此處程式碼與上一版 V1.1 相同，故省略... 
-       在您複製時，請確保 V1.1 的這整段 display_dashboard() 都被複製)"""
     st.header(f"📈 {team_key} 儀表板 (第 {st.session_state.game_season} 季)")
     bs = team_data['BS']
     is_data = team_data['IS']
@@ -162,7 +173,7 @@ def display_dashboard(team_key, team_data):
         col1, col2, col3 = st.columns(3)
         col1.metric("🏭 工廠 (座)", team_data['factories'])
         col2.metric("🔩 P1 生產線 (條)", team_data['lines_p1'])
-        col3.metric("🔩 P2 生稱線 (條)", team_data['lines_p2'])
+        col3.metric("🔩 P2 生產線 (條)", team_data['lines_p2']) 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("📦 R1 庫存 (u)", f"{team_data['inventory_R1_units']:,.0f}")
         col2.metric("🏭 P1 庫存 (u)", f"{team_data['inventory_P1_units']:,.0f}")
@@ -170,46 +181,67 @@ def display_dashboard(team_key, team_data):
         col4.metric("🏭 P2 庫存 (u)", f"{team_data['inventory_P2_units']:,.0f}")
 
 
-# --- 4. 決策表單 (Decision Form V2) ---
+# --- 5. 決策表單 (Decision Form V2) (*** V2.0 新增提示 ***) ---
 def display_decision_form(team_key):
-    """(此處程式碼與上一版 V1.1 相同，故省略... 
-       在您複製時，請確保 V1.1 的這整段 display_decision_form() 都被複製)"""
     team_data = st.session_state.teams[team_key]
     with st.form(f"decision_form_{team_key}"):
         st.header(f"📝 {team_key} - 第 {st.session_state.game_season} 季決策單")
+        
         tab_p1, tab_p2, tab_prod, tab_fin = st.tabs(["P1 產品決策", "P2 產品決策", "生產與資本決策", "財務決策"])
+
         with tab_p1:
             st.subheader("P1 產品決策")
             decision_price_P1 = st.slider("P1 銷售價格", 100, 1000, value=team_data['MR']['price_p1'], step=10)
+            st.caption("提示：價格將影響您的『市場吸引力』。價格越低，吸引力越高，但毛利越低。")
             decision_ad_P1 = st.number_input("P1 廣告費用", min_value=0, step=10000, value=team_data['MR']['ad_p1'])
+            st.caption("提示：廣告費將影響您的『市場吸引力』。投入越高，吸引力越高，但會侵蝕您的營業淨利。")
             decision_rd_P1 = st.number_input("P1 研發費用", min_value=0, step=50000, value=0)
+            st.caption(f"提示：研發費用會累計。P1 目前 L{team_data['rd_level_P1']}，累計投入 ${team_data['rd_investment_P1']:,.0f}。")
+            
         with tab_p2:
             st.subheader("P2 產品決策")
             decision_price_P2 = st.slider("P2 銷售價格", 150, 1500, value=team_data['MR']['price_p2'], step=10)
+            st.caption("提示：P2 市場與 P1 獨立。")
             decision_ad_P2 = st.number_input("P2 廣告費用", min_value=0, step=10000, value=team_data['MR']['ad_p2'])
+            st.caption("提示：P2 的廣告效果與 P1 獨立計算。")
             decision_rd_P2 = st.number_input("P2 研發費用", min_value=0, step=50000, value=0)
+            st.caption(f"提示：P2 目前 L{team_data['rd_level_P2']}，累計投入 ${team_data['rd_investment_P2']:,.0f}。")
+
         with tab_prod:
             st.subheader("生產計畫")
             col1, col2 = st.columns(2)
             decision_produce_P1 = col1.number_input("P1 計畫產量 (單位)", min_value=0, step=100, value=0)
             decision_produce_P2 = col2.number_input("P2 計畫產量 (單位)", min_value=0, step=100, value=0)
+            st.caption(f"提示：P1 最大產能 {team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']} (需 R1 {team_data['inventory_R1_units']} u)。 "
+                       f"P2 最大產能 {team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']} (需 R2 {team_data['inventory_R2_units']} u)。")
+
             st.subheader("原料採購")
             col1, col2 = st.columns(2)
             decision_buy_R1 = col1.number_input("採購 R1 數量 (單位)", min_value=0, step=100, value=0)
             decision_buy_R2 = col2.number_input("採購 R2 數量 (單位)", min_value=0, step=100, value=0)
+            st.caption("提示：採購的原料會在本季花費現金，但**下一季**才能用於生產 (V2 簡化版：本季即可用)。")
+            
             st.subheader("資本投資")
             col1, col2, col3 = st.columns(3)
             decision_build_factory = col1.number_input("建置新工廠 (座)", min_value=0, value=0)
             decision_build_line_p1 = col2.number_input("建置 P1 生產線 (條)", min_value=0, value=0)
             decision_build_line_p2 = col3.number_input("建置 P2 生產線 (條)", min_value=0, value=0)
+            total_lines_now = team_data['lines_p1'] + team_data['lines_p2']
+            total_capacity_now = team_data['factories'] * GLOBAL_PARAMS['factory_capacity']
+            st.caption(f"提示：1 座工廠 (成本 ${GLOBAL_PARAMS['factory_cost']:,}) 可容納 {GLOBAL_PARAMS['factory_capacity']} 條生產線 (P1+P2)。 "
+                       f"您目前 {team_data['factories']} 座工廠，已使用 {total_lines_now} / {total_capacity_now} 條。")
+
         with tab_fin:
             st.subheader("財務決策")
             col1, col2 = st.columns(2)
             decision_loan = col1.number_input("本季銀行借款", min_value=0, step=100000, value=0)
             decision_repay = col2.number_input("本季償還貸款", min_value=0, step=100000, value=0)
+            st.caption(f"提示：您目前的銀行借款總額為 ${team_data['BS']['bank_loan']:,.0f}。本季將產生 ${team_data['BS']['bank_loan'] * GLOBAL_PARAMS['bank_loan_interest_rate_per_season']:,.0f} 的利息費用。")
         
+        # --- 提交與檢查 ---
         submitted = st.form_submit_button("提交本季決策")
         if submitted:
+            # (檢查邏輯與 V1.3 相同)
             total_lines = team_data['lines_p1'] + decision_build_line_p1 + \
                           team_data['lines_p2'] + decision_build_line_p2
             total_factories = team_data['factories'] + decision_build_factory
@@ -219,7 +251,7 @@ def display_decision_form(team_key):
             if decision_produce_P1 > (team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']):
                 st.error(f"P1 計畫產量 ({decision_produce_P1}) 超過 P1 總產能 ({team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']})！")
                 return
-            if decision_produce_P2 > (team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']):
+            if decision_produce_P2 > (team_data['lines_p2'] * GLOBAL_GPARAMS['line_p2_capacity']):
                 st.error(f"P2 計畫產量 ({decision_produce_P2}) 超過 P2 總產能 ({team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']})！")
                 return
 
@@ -234,66 +266,44 @@ def display_decision_form(team_key):
             st.success(f"{team_key} 第 {st.session_state.game_season} 季決策已提交！等待老師結算...")
             st.rerun()
 
-# --- 5. 結算引擎 (*** V1.2 升級 ***) ---
+# --- 6. 結算引擎 (V1.2 版) ---
 def run_season_calculation():
-    """
-    V2 結算引擎 (V1.2 升級)
-    
-    *** 新增：處理未提交的隊伍 ***
-    """
+    """V2 結算引擎 (V1.2 版)，包含強制結算邏輯"""
     
     teams = st.session_state.teams
     submitted_decisions = st.session_state.decisions
-    
-    # *** V1.2 新增：建立最終決策列表 ***
     final_decisions = {}
     
     for team_key, team_data in teams.items():
         if team_key in submitted_decisions:
-            # 1. 已提交的隊伍：使用他們的決策
             final_decisions[team_key] = submitted_decisions[team_key]
         else:
-            # 2. 未提交的隊伍：套用 "預設懲罰"
             st.warning(f"警告：{team_key} 未提交決策，將使用上一季的市場決策及 0 投入。")
             final_decisions[team_key] = {
-                # 行銷：沿用上季
-                'price_p1': team_data['MR']['price_p1'], 
-                'ad_p1': team_data['MR']['ad_p1'],
-                'price_p2': team_data['MR']['price_p2'], 
-                'ad_p2': team_data['MR']['ad_p2'],
-                
-                # 其他：全部為 0
-                'rd_p1': 0, 'rd_p2': 0,
-                'produce_p1': 0, 'produce_p2': 0,
-                'buy_r1': 0, 'buy_r2': 0,
-                'build_factory': 0, 'build_line_p1': 0, 'build_line_p2': 0,
-                'loan': 0, 'repay': 0
+                'price_p1': team_data['MR']['price_p1'], 'ad_p1': team_data['MR']['ad_p1'],
+                'price_p2': team_data['MR']['price_p2'], 'ad_p2': team_data['MR']['ad_p2'],
+                'rd_p1': 0, 'rd_p2': 0, 'produce_p1': 0, 'produce_p2': 0,
+                'buy_r1': 0, 'buy_r2': 0, 'build_factory': 0, 
+                'build_line_p1': 0, 'build_line_p2': 0, 'loan': 0, 'repay': 0
             }
 
-    # === 階段 1: 結算支出、生產、研發 (10 組各自獨立) ===
-    # *** V1.2 修改：迴圈從 'decisions' 改為 'final_decisions' ***
+    # === 階段 1: 結算支出、生產、研發 ===
     for team_key, decision in final_decisions.items():
         team_data = teams[team_key]
         bs = team_data['BS']
-        is_data = team_data['IS'] # 這是 "上一季" 的IS，我們要清空並重建
-        is_data = {k: 0 for k in is_data} # 重置 "本季" 損益表
+        is_data = {k: 0 for k in team_data['IS']} # 重置 "本季" 損益表
 
-        # 1a. 財務成本 (利息)
         is_data['interest_expense'] = bs['bank_loan'] * GLOBAL_PARAMS['bank_loan_interest_rate_per_season']
-        # 1b. 維護成本
         maint_cost = (team_data['factories'] * GLOBAL_PARAMS['factory_maintenance']) + \
                      (team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_maintenance']) + \
                      (team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_maintenance'])
         is_data['op_expense_maintenance'] = maint_cost
-        # 1c. 資本支出 (CapEx)
         capex_cost = (decision['build_factory'] * GLOBAL_PARAMS['factory_cost']) + \
                      (decision['build_line_p1'] * GLOBAL_PARAMS['line_p1_cost']) + \
                      (decision['build_line_p2'] * GLOBAL_PARAMS['line_p2_cost'])
-        # 1d. 原料採購
         buy_R1_cost = decision['buy_r1'] * GLOBAL_PARAMS['raw_material_cost_R1']
         buy_R2_cost = decision['buy_r2'] * GLOBAL_PARAMS['raw_material_cost_R2']
         
-        # 1e. 生產 (檢查限制)
         max_prod_p1_lines = team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']
         max_prod_p1_r1 = team_data['inventory_R1_units'] / GLOBAL_PARAMS['p1_material_needed_R1']
         actual_prod_p1 = int(min(decision['produce_p1'], max_prod_p1_lines, max_prod_p1_r1))
@@ -306,26 +316,20 @@ def run_season_calculation():
         p2_labor_cost = actual_prod_p2 * GLOBAL_PARAMS['p2_labor_cost']
         p2_r2_used_units = actual_prod_p2 * GLOBAL_PARAMS['p2_material_needed_R2']
 
-        # 1f. 行銷與研發
         is_data['op_expense_ads'] = decision['ad_p1'] + decision['ad_p2']
         is_data['op_expense_rd'] = decision['rd_p1'] + decision['rd_p2']
-        
-        # 1g. 折舊
         depr_cost = (team_data['lines_p1'] * GLOBAL_PARAMS['p1_depreciation_per_line']) + \
                     (team_data['lines_p2'] * GLOBAL_PARAMS['p2_depreciation_per_line'])
         is_data['depreciation_expense'] = depr_cost
         
-        # 1h. 總現金支出
         total_cash_out = maint_cost + capex_cost + buy_R1_cost + buy_R2_cost + \
                          p1_labor_cost + p2_labor_cost + \
                          is_data['op_expense_ads'] + is_data['op_expense_rd'] + \
                          decision['repay']
                          
-        # 1i. 結算現金 (尚未加入營收)
         bs['cash'] -= total_cash_out
         bs['cash'] += decision['loan']
         
-        # 1j. 結算資產與庫存 (非財報)
         team_data['factories'] += decision['build_factory']
         team_data['lines_p1'] += decision['build_line_p1']
         team_data['lines_p2'] += decision['build_line_p2']
@@ -336,77 +340,57 @@ def run_season_calculation():
         team_data['inventory_R2_units'] -= p2_r2_used_units
         team_data['inventory_P2_units'] += actual_prod_p2
 
-        # 1k. 結算研發
         team_data['rd_investment_P1'] += decision['rd_p1']
         if team_data['rd_level_P1'] < 5:
             next_level_cost = GLOBAL_PARAMS['rd_costs_to_level_up'][team_data['rd_level_P1'] + 1]
-            if team_data['rd_investment_P1'] >= next_level_cost:
-                team_data['rd_level_P1'] += 1
+            if team_data['rd_investment_P1'] >= next_level_cost: team_data['rd_level_P1'] += 1
         team_data['rd_investment_P2'] += decision['rd_p2']
         if team_data['rd_level_P2'] < 5:
             next_level_cost = GLOBAL_PARAMS['rd_costs_to_level_up'][team_data['rd_level_P2'] + 1]
-            if team_data['rd_investment_P2'] >= next_level_cost:
-                team_data['rd_level_P2'] += 1
+            if team_data['rd_investment_P2'] >= next_level_cost: team_data['rd_level_P2'] += 1
                 
-        # 1l. 儲存本季決策 (用於儀表板)
         team_data['MR']['price_p1'] = decision['price_p1']
         team_data['MR']['ad_p1'] = decision['ad_p1']
         team_data['MR']['price_p2'] = decision['price_p2']
         team_data['MR']['ad_p2'] = decision['ad_p2']
-        
-        # 1m. 儲存IS數據
         team_data['IS'] = is_data 
 
-    # === 階段 2: 市場結算 (*** V1.2 修改：使用 final_decisions ***) ===
+    # === 階段 2: 市場結算 (*** V1 簡化版 ***) ===
     st.warning("V1 結算引擎：使用簡化銷售模型 (未來將替換為競爭模型)")
-    
-    # --- P1 市場 ---
     market_p1_data = {key: (d['ad_p1'] / 10000) / (d['price_p1'] / 300) for key, d in final_decisions.items()}
     total_score_p1 = sum(market_p1_data.values())
     TOTAL_MARKET_DEMAND_P1 = 50000 
-
     for team_key, score in market_p1_data.items():
-        team_data = teams[team_key]
-        decision = final_decisions[team_key] # *** V1.2 修改 ***
-        
+        team_data = teams[team_key]; decision = final_decisions[team_key]
         market_share = (score / total_score_p1) if total_score_p1 > 0 else 0.1
         demand_units = int(TOTAL_MARKET_DEMAND_P1 * market_share)
         actual_sales_units = min(demand_units, team_data['inventory_P1_units'])
         revenue = actual_sales_units * decision['price_p1']
-        
         team_data['BS']['cash'] += revenue
         team_data['inventory_P1_units'] -= actual_sales_units
         team_data['IS']['revenue_p1'] = revenue
         team_data['MR']['sales_units_p1'] = actual_sales_units
         team_data['MR']['market_share_p1'] = market_share
 
-    # --- P2 市場 ---
     market_p2_data = {key: (d['ad_p2'] / 10000) / (d['price_p2'] / 450) for key, d in final_decisions.items()}
     total_score_p2 = sum(market_p2_data.values())
     TOTAL_MARKET_DEMAND_P2 = 40000 
-
     for team_key, score in market_p2_data.items():
-        team_data = teams[team_key]
-        decision = final_decisions[team_key] # *** V1.2 修改 ***
-        
+        team_data = teams[team_key]; decision = final_decisions[team_key]
         market_share = (score / total_score_p2) if total_score_p2 > 0 else 0.1
         demand_units = int(TOTAL_MARKET_DEMAND_P2 * market_share)
         actual_sales_units = min(demand_units, team_data['inventory_P2_units'])
         revenue = actual_sales_units * decision['price_p2']
-        
         team_data['BS']['cash'] += revenue
         team_data['inventory_P2_units'] -= actual_sales_units
         team_data['IS']['revenue_p2'] = revenue
         team_data['MR']['sales_units_p2'] = actual_sales_units
         team_data['MR']['market_share_p2'] = market_share
 
-    # === 階段 3: 財務報表結算 (*** V1.2 修改：使用 final_decisions ***) ===
+    # === 階段 3: 財務報表結算 ===
     for team_key, team_data in teams.items():
-        bs = team_data['BS']
-        is_data = team_data['IS']
-        decision = final_decisions[team_key] # *** V1.2 修改 ***
+        bs = team_data['BS']; is_data = team_data['IS']; decision = final_decisions[team_key]
         
-        # 損益表 (Income Statement)
         is_data['total_revenue'] = is_data['revenue_p1'] + is_data['revenue_p2']
         cogs_p1_cost = team_data['MR']['sales_units_p1'] * (GLOBAL_PARAMS['raw_material_cost_R1'] + GLOBAL_PARAMS['p1_labor_cost'])
         cogs_p2_cost = team_data['MR']['sales_units_p2'] * (GLOBAL_PARAMS['raw_material_cost_R2'] + GLOBAL_PARAMS['p2_labor_cost'])
@@ -420,7 +404,6 @@ def run_season_calculation():
         is_data['net_income'] = is_data['profit_before_tax'] - is_data['tax_expense']
         bs['cash'] -= is_data['tax_expense']
 
-        # 資產負債表 (Balance Sheet)
         bs['bank_loan'] += decision['loan']
         bs['bank_loan'] -= decision['repay']
         bs['shareholder_equity'] += is_data['net_income']
@@ -436,7 +419,6 @@ def run_season_calculation():
                                 (team_data['inventory_P1_units'] * cogs_p1_unit) + \
                                 (team_data['inventory_P2_units'] * cogs_p2_unit)
 
-        # 檢查平衡
         bs['total_assets'] = bs['cash'] + bs['inventory_value'] + bs['fixed_assets_value'] - bs['accumulated_depreciation']
         bs['total_liabilities_and_equity'] = bs['bank_loan'] + bs['shareholder_equity']
         
@@ -455,86 +437,169 @@ def run_season_calculation():
             bs['shareholder_equity'] -= interest_penalty 
             st.error(f"{team_key} 現金不足！已強制申請 ${emergency_loan:,.0f} 的緊急貸款，並支付 ${interest_penalty:,.0f} 罰息。")
 
-        # 存回 state
         team_data['BS'] = bs
         team_data['IS'] = is_data
 
     # === 階段 5: 推進遊戲 ===
     st.session_state.game_season += 1
-    st.session_state.decisions = {} # 清空本季決策
+    st.session_state.decisions = {} 
     
     st.success(f"第 {st.session_state.game_season - 1} 季結算完畢！已進入第 {st.session_state.game_season} 季。")
 
 
-# --- 6. 主程式 (Main App) ---
-# (*** V1.2 修改：已加入亂碼修復 ***)
-# -*- coding: utf-8 -*-
+# --- 7. (V2.0 新增) 老師專用函式 ---
+def calculate_company_value(bs_data):
+    """計算公司總價值 (用於排行榜)"""
+    value = bs_data['cash'] + \
+            bs_data['inventory_value'] + \
+            (bs_data['fixed_assets_value'] - bs_data['accumulated_depreciation']) - \
+            bs_data['bank_loan']
+    return value
+
+def display_admin_dashboard():
+    """顯示老師的控制台畫面"""
+    st.header(f"👨‍🏫 管理員控制台 (第 {st.session_state.game_season} 季)")
+    
+    # --- A. 排行榜 ---
+    st.subheader("遊戲排行榜 (依公司總價值)")
+    leaderboard = []
+    for team_key in team_list:
+        if team_key in st.session_state.teams:
+            team_data = st.session_state.teams[team_key]
+            value = calculate_company_value(team_data['BS'])
+            leaderboard.append((team_key, value, team_data['BS']['cash'], team_data['IS']['net_income']))
+        else:
+            # 如果團隊還沒登入過，也顯示
+            leaderboard.append((team_key, 0, 0, 0))
+            
+    leaderboard.sort(key=lambda x: x[1], reverse=True) # 依總價值排序
+    
+    df = pd.DataFrame(leaderboard, columns=["團隊", "公司總價值", "現金", "上季淨利"])
+    df.index = df.index + 1 # 讓排名從 1 開始
+    st.dataframe(df, use_container_width=True)
+
+    # --- B. 監控面板 ---
+    st.subheader("本季決策提交狀態")
+    all_submitted = True 
+    submitted_count = 0
+    cols = st.columns(5)
+    
+    for i, team in enumerate(team_list):
+        col = cols[i % 5]
+        if team not in st.session_state.teams:
+            st.session_state.teams[team] = init_team_state() # 確保所有 team 都已初始化
+
+        if team not in st.session_state.decisions:
+            col.warning(f"🟡 {team}\n(尚未提交)")
+            all_submitted = False
+        else:
+            col.success(f"✅ {team}\n(已提交)")
+            submitted_count += 1
+    st.info(f"提交進度: {submitted_count} / {len(team_list)}")
+
+    # --- C. 控制按鈕 ---
+    st.subheader("遊戲控制")
+    
+    # ** 核心按鈕：結算本季 **
+    if st.button("➡️ 結算本季"):
+        if not all_submitted:
+            st.warning("警告：正在強制結算。未提交的隊伍將使用預設決策。")
+        
+        with st.spinner("正在執行市場結算..."):
+            run_season_calculation()
+        st.rerun()
+
+    if st.button("♻️ !!! 重置整個遊戲 !!!"):
+        st.session_state.game_season = 1
+        st.session_state.teams = {}
+        st.session_state.decisions = {}
+        st.session_state.logged_in_user = None # 登出所有人
+        st.success("遊戲已重置回第 1 季")
+        st.rerun()
+    
+    if st.button("登出"):
+        st.session_state.logged_in_user = None
+        st.rerun()
+
+# --- 8. 主程式 (Main App) (*** V2.0 重大修改 ***) ---
+st.set_page_config(layout="wide")
 
 # --- 初始化 session_state ---
 if 'game_season' not in st.session_state:
     st.session_state.game_season = 1
-    st.session_state.teams = {} 
-    st.session_state.decisions = {} 
+    st.session_state.teams = {} # 儲存 10 組公司的 "當前狀態"
+    st.session_state.decisions = {} # 儲存 10 組公司的 "本季決策"
+    st.session_state.logged_in_user = None # 追蹤登入狀態
+
+# --- 登入邏輯 ---
+if st.session_state.logged_in_user is None:
+    st.title("🚀 新星製造 V2 - 遊戲登入")
     
-team_list = [f"第 {i} 組 (公司 {i})" for i in range(1, 11)]
-
-# --- 管理員面板 (Sidebar) (*** V1.2 修改 ***) ---
-st.sidebar.title("👨‍🏫 管理員面板")
-st.sidebar.header(f"當前遊戲進度：第 {st.session_state.game_season} 季")
-
-st.sidebar.subheader("本季決策提交狀態")
-all_submitted = True # V1.2: 仍然計算，但僅供參考
-submitted_count = 0
-for team in team_list:
-    # V1.2: 我們必須確保所有 team 都在 teams 裡被初始化了
-    # 學生切換到自己的隊伍時，就會自動初始化
-    if team not in st.session_state.teams:
-        st.session_state.teams[team] = init_team_state()
-
-    # 檢查決策
-    if team not in st.session_state.decisions:
-        st.sidebar.warning(f"🟡 {team}: 尚未提交")
-        all_submitted = False
-    else:
-        st.sidebar.success(f"✅ {team}: 已提交")
-        submitted_count += 1
-st.sidebar.info(f"提交進度: {submitted_count} / {len(team_list)}")
-
-# ** 核心按鈕：結算本季 (*** V1.2 修改：移除 'disabled' ***) **
-if st.sidebar.button("➡️ 結算本季"):
-    if not all_submitted:
-        st.sidebar.warning("警告：正在強制結算。未提交的隊伍將使用預設決策。")
+    user_type = st.radio("請選擇您的身份：", ["👨‍🏫 老師 (管理員)", "🎓 學生 (玩家)"])
     
-    with st.spinner("正在執行市場結算..."):
-        run_season_calculation()
-    st.rerun()
+    selected_team_for_login = "admin" # 預設
+    
+    if user_type == "🎓 學生 (玩家)":
+        selected_team_for_login = st.selectbox("請選擇您的公司 (隊伍)：", team_list)
+    
+    password = st.text_input("請輸入密碼：", type="password")
+    
+    if st.button("登入"):
+        if user_type == "👨‍🏫 老師 (管理員)":
+            if password == PASSWORDS["admin"]:
+                st.session_state.logged_in_user = "admin"
+                st.rerun()
+            else:
+                st.error("老師密碼錯誤！")
+        
+        elif user_type == "🎓 學生 (玩家)":
+            if password == PASSWORDS.get(selected_team_for_login, "WRONG"):
+                st.session_state.logged_in_user = selected_team_for_login
+                
+                # (V2.0) 確保學生登入時，該隊伍已被初始化
+                if selected_team_for_login not in st.session_state.teams:
+                    st.session_state.teams[selected_team_for_login] = init_team_state()
+                    
+                st.rerun()
+            else:
+                st.error(f"{selected_team_for_login} 的密碼錯誤！")
 
-st.sidebar.markdown("---")
-if st.sidebar.button("♻️ !!! 重置整個遊戲 !!!"):
-    st.session_state.game_season = 1
-    st.session_state.teams = {}
-    st.session_state.decisions = {}
-    st.success("遊戲已重置回第 1 季")
-    st.rerun()
-
-# --- 學生主畫面 (Main Screen) ---
-st.title("🚀 新星製造 (Nova Manufacturing) V2 挑戰賽")
-selected_team = st.selectbox("請選擇您的公司 (隊伍)：", team_list)
-
-# --- 載入或初始化該團隊的數據 ---
-# (V1.2: 這一步在側邊欄已經做過了，但為保險起見再做一次)
-if selected_team not in st.session_state.teams:
-    st.session_state.teams[selected_team] = init_team_state()
-
-current_team_data = st.session_state.teams[selected_team]
-
-# --- 顯示儀表板 ---
-display_dashboard(selected_team, current_team_data)
-
-st.markdown("---")
-
-# --- 顯示決策表單或等待畫面 ---
-if selected_team in st.session_state.decisions:
-    st.info(f"您已提交第 {st.session_state.game_season} 季的決策，請等待老師結算...")
+# --- 登入後的畫面 ---
 else:
-    display_decision_form(selected_team)
+    # 檢查登入者身份
+    current_user = st.session_state.logged_in_user
+    
+    if current_user == "admin":
+        # --- A. 老師畫面 ---
+        display_admin_dashboard()
+        
+    elif current_user in team_list:
+        # --- B. 學生畫面 ---
+        team_key = current_user
+        
+        # 學生登出按鈕
+        if st.sidebar.button("登出"):
+            st.session_state.logged_in_user = None
+            st.rerun()
+        st.sidebar.info(f"您已登入為： {team_key}")
+        
+        # (確保團隊數據存在)
+        if team_key not in st.session_state.teams:
+            st.session_state.teams[team_key] = init_team_state()
+            
+        current_team_data = st.session_state.teams[team_key]
+        
+        # 顯示儀表板
+        display_dashboard(team_key, current_team_data)
+        st.markdown("---")
+        
+        # 顯示決策表單或等待畫面
+        if team_key in st.session_state.decisions:
+            st.info(f"您已提交第 {st.session_state.game_season} 季的決策，請等待老師結算...")
+            
+            # (V2.0 暫不開放撤銷，未來可加入)
+            # if st.button("撤銷提交 (Undo)"):
+            #     del st.session_state.decisions[team_key]
+            #     st.rerun()
+        else:
+            display_decision_form(team_key)
