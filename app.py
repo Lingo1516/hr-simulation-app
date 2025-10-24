@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V2.5)
+# app.py (Nova Manufacturing Sim - V2-Framework-V2.6)
 #
-# V2.5 更新：
-# 1. (使用者要求) 在「管理員控制台」新增「修改團隊數據」功能，
-#    老師可手動修改任一隊伍的「現金」和「銀行借款」。
-# 2. 修改相關函數，確保資產負債表在修改後能自動平衡。
+# V2.6 更新：
+# 1. (使用者要求) 在「管理員控制台」的「提交狀態」區塊新增「刷新提交狀態」按鈕，
+#    解決老師畫面狀態更新不及時的問題，無需登出再登入。
 
 import streamlit as st
 import pandas as pd
@@ -55,7 +54,7 @@ team_list = [f"第 {i} 組" for i in range(1, 11)]
 
 # --- 3. 團隊狀態初始化 (V2.3) ---
 def init_team_state(team_key): # 傳入 team_key
-    """定義一家公司 "出生時" 的狀態 (V2.3)"""
+    # (此函數與 V2.5 版本完全相同，故省略...)
     initial_cash = 10000000 # 預設初始現金
     initial_factories = 1
     initial_lines_p1 = 1
@@ -105,23 +104,20 @@ def init_team_state(team_key): # 傳入 team_key
 
 # --- 3.1 (V2.5 新增) 資產負債表平衡函數 ---
 def balance_bs(bs_data):
-    """輸入 BS 字典，重新計算總資產和總負債權益，並強制平衡"""
-    # 重新計算總資產
+    # (此函數與 V2.5 版本完全相同，故省略...)
     bs_data['total_assets'] = bs_data['cash'] + bs_data['inventory_value'] + \
                               bs_data['fixed_assets_value'] - bs_data['accumulated_depreciation']
-    # 重新計算總負債與權益 (假設只有銀行借款)
     bs_data['total_liabilities_and_equity'] = bs_data['bank_loan'] + bs_data['shareholder_equity']
-
-    # 強制平衡 (差額調整至股東權益)
-    if abs(bs_data['total_assets'] - bs_data['total_liabilities_and_equity']) > 1: # 允許 1 元誤差
+    if abs(bs_data['total_assets'] - bs_data['total_liabilities_and_equity']) > 1:
         diff = bs_data['total_assets'] - bs_data['total_liabilities_and_equity']
         bs_data['shareholder_equity'] += diff
-        bs_data['total_liabilities_and_equity'] = bs_data['total_assets'] # 確保完全相等
+        bs_data['total_liabilities_and_equity'] = bs_data['total_assets']
     return bs_data
 
 
 # --- 4. 儀表板 (Dashboard V2) (V2.4 格式化) ---
 def display_dashboard(team_key, team_data):
+    # (此函數與 V2.5 版本完全相同，故省略...)
     st.header(f"📈 {team_data['team_name']} ({team_key}) 儀表板 (第 {st.session_state.game_season} 季)")
     bs = team_data['BS']
     is_data = team_data['IS']
@@ -192,10 +188,9 @@ def display_dashboard(team_key, team_data):
         col3.metric("📦 R2 庫存 (u)", f"{team_data['inventory_R2_units']:,.0f}")
         col4.metric("🏭 P2 庫存 (u)", f"{team_data['inventory_P2_units']:,.0f}")
 
-
 # --- 5. 決策表單 (Decision Form V2) (V2.4 格式化) ---
 def display_decision_form(team_key):
-    # (此函數與 V2.4 版本完全相同，故省略...)
+    # (此函數與 V2.5 版本完全相同，故省略...)
     team_data = st.session_state.teams[team_key]
     with st.form(f"decision_form_{team_key}"):
         st.header(f"📝 {team_data['team_name']} ({team_key}) - 第 {st.session_state.game_season} 季決策單")
@@ -285,7 +280,7 @@ def display_decision_form(team_key):
 # --- 6. 結算引擎 (V1.2 版) (V2.4 格式化) ---
 def run_season_calculation():
     """V2 結算引擎 (V1.2 版)，包含強制結算邏輯"""
-    # (此函數與 V2.4 版本完全相同，故省略...)
+    # (此函數與 V2.5 版本完全相同，故省略...)
     teams = st.session_state.teams
     submitted_decisions = st.session_state.decisions
     final_decisions = {}
@@ -439,8 +434,7 @@ def run_season_calculation():
                                 (team_data['inventory_P1_units'] * cogs_p1_unit) + \
                                 (team_data['inventory_P2_units'] * cogs_p2_unit)
 
-        # *** V2.5 使用平衡函數 ***
-        bs = balance_bs(bs)
+        bs = balance_bs(bs) # V2.5
 
         # === 階段 4: 緊急貸款 (破產檢查) ===
         if bs['cash'] < 0:
@@ -451,9 +445,7 @@ def run_season_calculation():
             bs['cash'] -= interest_penalty
             bs['shareholder_equity'] -= interest_penalty 
             st.error(f"{team_data['team_name']} ({team_key}) 現金不足！已強制申請 ${emergency_loan:,.0f} 的緊急貸款，並支付 ${interest_penalty:,.0f} 罰息。")
-            # *** V2.5 再次平衡 ***
-            bs = balance_bs(bs)
-
+            bs = balance_bs(bs) # V2.5
 
         team_data['BS'] = bs
         team_data['IS'] = is_data
@@ -465,7 +457,7 @@ def run_season_calculation():
     st.success(f"第 {st.session_state.game_season - 1} 季結算完畢！已進入第 {st.session_state.game_season} 季。")
 
 
-# --- 7. (V2.5 修改) 老師專用函式 ---
+# --- 7. (V2.5 修改) 老師專用函式 (*** V2.6 新增刷新按鈕 ***) ---
 def calculate_company_value(bs_data):
     """計算公司總價值 (用於排行榜)"""
     value = bs_data['cash'] + \
@@ -497,29 +489,24 @@ def display_admin_dashboard():
             edit_team_data = st.session_state.teams[edit_team_key]
             
             col1, col2 = st.columns(2)
-            # 使用 number_input，允許負數現金和負債 (雖然負債應為正)
             new_cash = col1.number_input(f"修改 {edit_team_data['team_name']} 的現金：", 
                                           value=edit_team_data['BS']['cash'], 
                                           step=100000,
-                                          format="%d", # 整數顯示
+                                          format="%d", 
                                           key=f"edit_cash_{edit_team_key}")
             new_loan = col2.number_input(f"修改 {edit_team_data['team_name']} 的銀行借款：", 
                                           value=edit_team_data['BS']['bank_loan'], 
-                                          min_value=0, # 借款不能為負
+                                          min_value=0, 
                                           step=100000,
-                                          format="%d", # 整數顯示
+                                          format="%d", 
                                           key=f"edit_loan_{edit_team_key}")
                                           
             if st.button(f"儲存對 {edit_team_data['team_name']} 的修改", key=f"save_edit_{edit_team_key}"):
-                # 更新數據
                 st.session_state.teams[edit_team_key]['BS']['cash'] = new_cash
                 st.session_state.teams[edit_team_key]['BS']['bank_loan'] = new_loan
-                
-                # *** 重新平衡資產負債表 ***
                 st.session_state.teams[edit_team_key]['BS'] = balance_bs(st.session_state.teams[edit_team_key]['BS'])
-                
                 st.success(f"{edit_team_data['team_name']} 的數據已更新！")
-                st.rerun() # 立即刷新排行榜
+                st.rerun() 
         else:
             st.info("該隊伍尚未登入過，無法修改。")
 
@@ -535,10 +522,10 @@ def display_admin_dashboard():
         value = calculate_company_value(team_data['BS'])
         leaderboard.append((team_data['team_name'], value, team_data['BS']['cash'], team_data['IS']['net_income']))
             
-    leaderboard.sort(key=lambda x: x[1], reverse=True) # 依總價值排序
+    leaderboard.sort(key=lambda x: x[1], reverse=True) 
     
     df = pd.DataFrame(leaderboard, columns=["隊伍名稱", "公司總價值", "現金", "上季淨利"])
-    df.index = df.index + 1 # 讓排名從 1 開始
+    df.index = df.index + 1 
     
     st.dataframe(df.style.format({
         "公司總價值": "${:,.0f}",
@@ -546,7 +533,7 @@ def display_admin_dashboard():
         "上季淨利": "${:,.0f}"
     }), use_container_width=True)
 
-    # --- B. 監控面板 (V2.3) ---
+    # --- B. 監控面板 (*** V2.6 新增刷新按鈕 ***) ---
     st.subheader("本季決策提交狀態")
     all_submitted = True 
     submitted_count = 0
@@ -554,6 +541,9 @@ def display_admin_dashboard():
     
     for i, team_key in enumerate(team_list):
         col = cols[i % 5]
+        # 確保初始化 (如果之前沒運行排行榜的話)
+        if team_key not in st.session_state.teams:
+             st.session_state.teams[team_key] = init_team_state(team_key)
         team_data = st.session_state.teams[team_key]
         display_name = f"{team_data['team_name']} ({team_key})" 
 
@@ -563,7 +553,12 @@ def display_admin_dashboard():
         else:
             col.success(f"✅ {display_name}\n(已提交)")
             submitted_count += 1
+            
     st.info(f"提交進度: {submitted_count} / {len(team_list)}")
+    
+    # *** V2.6 新增刷新按鈕 ***
+    if st.button("🔄 刷新提交狀態 (Refresh Status)"):
+        st.rerun()
 
     # --- C. 控制按鈕 ---
     st.subheader("遊戲控制")
