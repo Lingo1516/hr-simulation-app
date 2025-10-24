@@ -1,16 +1,50 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V2.7 - Revised Debug)
+# app.py (Nova Manufacturing Sim - V2-Framework-V2.8 - File Sync)
 #
-# V2.7 更新：
-# 1. 在「管理員控制台」頂部加入 `st.write` 除錯訊息，直接顯示 `decisions` 字典內容。
-# 2. (實驗性) 將老師畫面的「刷新提交狀態」按鈕行為從 st.rerun() 改為強制頁面重導向，
-#    嘗試解決跨裝置狀態同步不及時的問題。
+# V2.8 更新：
+# 1. (根本性修改) 引入檔案同步機制解決跨裝置狀態更新問題。
+#    - 學生提交時，將 decisions 字典寫入 decisions_state.pkl 檔案。
+#    - 老師刷新時，從 decisions_state.pkl 讀取最新狀態來更新顯示。
+#    - 結算和重置時，刪除 decisions_state.pkl 檔案。
+# 2. 引入 pickle 和 os 模組。
 
 import streamlit as st
 import pandas as pd
 import copy
-# V2.7 引入 streamlit.components.v1
+import pickle # V2.8
+import os     # V2.8
 import streamlit.components.v1 as components
+
+# --- 0. (V2.8 新增) 檔案同步相關 ---
+DECISIONS_FILE = "decisions_state.pkl"
+
+def save_decisions_to_file(decisions_dict):
+    """將 decisions 字典保存到檔案"""
+    try:
+        with open(DECISIONS_FILE, 'wb') as f:
+            pickle.dump(decisions_dict, f)
+    except Exception as e:
+        st.error(f"儲存決策檔案時出錯: {e}")
+
+def load_decisions_from_file():
+    """從檔案讀取 decisions 字典，若檔案不存在則返回空字典"""
+    if os.path.exists(DECISIONS_FILE):
+        try:
+            with open(DECISIONS_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            st.error(f"讀取決策檔案時出錯: {e}")
+            return {}
+    else:
+        return {}
+
+def delete_decisions_file():
+    """刪除決策檔案"""
+    try:
+        if os.path.exists(DECISIONS_FILE):
+            os.remove(DECISIONS_FILE)
+    except Exception as e:
+        st.error(f"刪除決策檔案時出錯: {e}")
 
 # --- 1. 遊戲參數 (V2 升級版) ---
 GLOBAL_PARAMS = {
@@ -190,15 +224,15 @@ def display_dashboard(team_key, team_data):
         col3.metric("📦 R2 庫存 (u)", f"{team_data['inventory_R2_units']:,.0f}")
         col4.metric("🏭 P2 庫存 (u)", f"{team_data['inventory_P2_units']:,.0f}")
 
-# --- 5. 決策表單 (Decision Form V2) (V2.4 格式化) ---
+# --- 5. 決策表單 (Decision Form V2) (*** V2.8 修改提交邏輯 ***) ---
 def display_decision_form(team_key):
-    # (此函數與 V2.5 版本完全相同，故省略...)
     team_data = st.session_state.teams[team_key]
     with st.form(f"decision_form_{team_key}"):
         st.header(f"📝 {team_data['team_name']} ({team_key}) - 第 {st.session_state.game_season} 季決策單")
         
         tab_p1, tab_p2, tab_prod, tab_fin = st.tabs(["P1 產品決策", "P2 產品決策", "生產與資本決策", "財務決策"])
 
+        # (各 Tab 內容與 V2.5 相同，故省略...)
         with tab_p1:
             st.subheader("P1 產品決策")
             decision_price_P1 = st.slider("P1 銷售價格", 100, 1000, value=team_data['MR']['price_p1'], step=10)
@@ -254,6 +288,7 @@ def display_decision_form(team_key):
         # --- 提交與檢查 ---
         submitted = st.form_submit_button("提交本季決策")
         if submitted:
+            # (檢查邏輯與 V2.5 相同)
             total_lines = team_data['lines_p1'] + decision_build_line_p1 + \
                           team_data['lines_p2'] + decision_build_line_p2
             total_factories = team_data['factories'] + decision_build_factory
@@ -267,7 +302,9 @@ def display_decision_form(team_key):
                 st.error(f"P2 計畫產量 ({decision_produce_P2:,}) 超過 P2 總產能 ({team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']:,})！")
                 return
 
-            st.session_state.decisions[team_key] = {
+            # *** V2.8 修改：儲存到 state 和 檔案 ***
+            current_decisions = st.session_state.get('decisions', {})
+            current_decisions[team_key] = {
                 'price_p1': decision_price_P1, 'ad_p1': decision_ad_P1, 'rd_p1': decision_rd_P1,
                 'price_p2': decision_price_P2, 'ad_p2': decision_ad_P2, 'rd_p2': decision_rd_P2,
                 'produce_p1': decision_produce_P1, 'produce_p2': decision_produce_P2,
@@ -275,15 +312,22 @@ def display_decision_form(team_key):
                 'build_factory': decision_build_factory, 'build_line_p1': decision_build_line_p1, 'build_line_p2': decision_build_line_p2,
                 'loan': decision_loan, 'repay': decision_repay
             }
+            st.session_state.decisions = current_decisions # 存回 state
+            save_decisions_to_file(current_decisions) # 寫入檔案
+            
             st.success(f"{team_data['team_name']} ({team_key}) 第 {st.session_state.game_season} 季決策已提交！等待老師結算...")
             st.rerun()
 
-# --- 6. 結算引擎 (V1.2 版) (V2.4 格式化) ---
+# --- 6. 結算引擎 (V1.2 版) (*** V2.8 修改：刪除檔案 ***) ---
 def run_season_calculation():
     """V2 結算引擎 (V1.2 版)，包含強制結算邏輯"""
-    # (此函數與 V2.5 版本完全相同，故省略...)
+    
     teams = st.session_state.teams
-    submitted_decisions = st.session_state.decisions
+    # *** V2.8 修改：優先從檔案讀取，確保最新 ***
+    submitted_decisions = load_decisions_from_file()
+    # 同步 session_state (以防萬一)
+    st.session_state.decisions = submitted_decisions
+    
     final_decisions = {}
     
     for team_key, team_data in teams.items():
@@ -304,6 +348,7 @@ def run_season_calculation():
             }
 
     # === 階段 1: 結算支出、生產、研發 ===
+    # (此階段邏輯與 V2.5 相同，故省略...)
     for team_key, decision in final_decisions.items():
         team_data = teams[team_key]
         bs = team_data['BS']
@@ -372,6 +417,7 @@ def run_season_calculation():
         team_data['IS'] = is_data 
 
     # === 階段 2: 市場結算 (*** V1 簡化版 ***) ===
+    # (此階段邏輯與 V2.5 相同，故省略...)
     st.warning("V1 結算引擎：使用簡化銷售模型 (未來將替換為競爭模型)")
     market_p1_data = {key: (d['ad_p1'] / 10000) / (d['price_p1'] / 300) if d['price_p1'] > 0 else 0 for key, d in final_decisions.items()} 
     total_score_p1 = sum(market_p1_data.values())
@@ -404,6 +450,7 @@ def run_season_calculation():
         team_data['MR']['market_share_p2'] = market_share
 
     # === 階段 3: 財務報表結算 ===
+    # (此階段邏輯與 V2.5 相同，故省略...)
     for team_key, team_data in teams.items():
         bs = team_data['BS']; is_data = team_data['IS']; decision = final_decisions[team_key]
         
@@ -451,16 +498,17 @@ def run_season_calculation():
         team_data['BS'] = bs
         team_data['IS'] = is_data
 
-    # === 階段 5: 推進遊戲 ===
+    # === 階段 5: 推進遊戲 (*** V2.8 新增：刪除檔案 ***) ===
     st.session_state.game_season += 1
     st.session_state.decisions = {} 
+    delete_decisions_file() # <--- 新增：刪除檔案
     
     st.success(f"第 {st.session_state.game_season - 1} 季結算完畢！已進入第 {st.session_state.game_season} 季。")
 
 
-# --- 7. (V2.5 修改) 老師專用函式 (*** V2.6 新增刷新按鈕 ***) ---
+# --- 7. (V2.5 修改) 老師專用函式 (*** V2.8 修改刷新邏輯 ***) ---
 def calculate_company_value(bs_data):
-    """計算公司總價值 (用於排行榜)"""
+    # (此函數與 V2.5 版本完全相同)
     value = bs_data['cash'] + \
             bs_data['inventory_value'] + \
             (bs_data['fixed_assets_value'] - bs_data['accumulated_depreciation']) - \
@@ -471,12 +519,14 @@ def display_admin_dashboard():
     """顯示老師的控制台畫面"""
     st.header(f"👨‍🏫 管理員控制台 (第 {st.session_state.game_season} 季)")
     
-    # *** V2.7 新增：除錯輸出 ***
-    st.write("--- 偵錯用 - 當前決策狀態 (decisions dict) ---")
+    # *** V2.7 除錯輸出 (可選，確認檔案讀寫正常後可註解掉) ***
+    st.write("--- 偵錯用 - 當前 session_state.decisions 狀態 ---")
     st.write(st.session_state.get('decisions', {}))
+    st.write("--- 偵錯用 - 當前 decisions_state.pkl 檔案內容 ---")
+    st.write(load_decisions_from_file()) # 直接讀檔顯示
     st.write("--- 偵錯結束 ---")
 
-    # --- (V2.1 新增) 學生密碼總覽 ---
+    # --- 學生密碼總覽 ---
     with st.expander("🔑 學生密碼總覽"):
         st.warning("請勿將此畫面展示給學生。")
         student_passwords = {team: pw for team, pw in PASSWORDS.items() if team != "admin"}
@@ -485,37 +535,26 @@ def display_admin_dashboard():
         st.dataframe(pw_df, use_container_width=True)
         st.caption("如需修改密碼，請直接修改 app.py 檔案頂部的 PASSWORDS 字典。")
 
-    # --- (V2.5 新增) 修改團隊數據 ---
+    # --- 修改團隊數據 ---
     with st.expander("🔧 修改團隊數據 (Edit Team Data)"):
         st.warning("請謹慎使用此功能。修改後會直接影響該隊伍的資產負債表。")
-        
         edit_team_key = st.selectbox("選擇要修改的隊伍：", team_list, key="admin_edit_team_select")
-        
         if edit_team_key in st.session_state.teams:
             edit_team_data = st.session_state.teams[edit_team_key]
-            
             col1, col2 = st.columns(2)
             new_cash = col1.number_input(f"修改 {edit_team_data['team_name']} 的現金：", 
-                                          value=edit_team_data['BS']['cash'], 
-                                          step=100000,
-                                          format="%d", 
-                                          key=f"edit_cash_{edit_team_key}")
+                                          value=edit_team_data['BS']['cash'], step=100000,
+                                          format="%d", key=f"edit_cash_{edit_team_key}")
             new_loan = col2.number_input(f"修改 {edit_team_data['team_name']} 的銀行借款：", 
-                                          value=edit_team_data['BS']['bank_loan'], 
-                                          min_value=0, 
-                                          step=100000,
-                                          format="%d", 
-                                          key=f"edit_loan_{edit_team_key}")
-                                          
+                                          value=edit_team_data['BS']['bank_loan'], min_value=0, 
+                                          step=100000, format="%d", key=f"edit_loan_{edit_team_key}")
             if st.button(f"儲存對 {edit_team_data['team_name']} 的修改", key=f"save_edit_{edit_team_key}"):
                 st.session_state.teams[edit_team_key]['BS']['cash'] = new_cash
                 st.session_state.teams[edit_team_key]['BS']['bank_loan'] = new_loan
                 st.session_state.teams[edit_team_key]['BS'] = balance_bs(st.session_state.teams[edit_team_key]['BS'])
                 st.success(f"{edit_team_data['team_name']} 的數據已更新！")
                 st.rerun() 
-        else:
-            st.info("該隊伍尚未登入過，無法修改。")
-
+        else: st.info("該隊伍尚未登入過，無法修改。")
         
     # --- A. 排行榜 (V2.4 格式化) ---
     st.subheader("遊戲排行榜 (依公司總價值)")
@@ -523,30 +562,26 @@ def display_admin_dashboard():
     for team_key in team_list:
         if team_key not in st.session_state.teams:
             st.session_state.teams[team_key] = init_team_state(team_key)
-            
         team_data = st.session_state.teams[team_key]
         value = calculate_company_value(team_data['BS'])
         leaderboard.append((team_data['team_name'], value, team_data['BS']['cash'], team_data['IS']['net_income']))
-            
     leaderboard.sort(key=lambda x: x[1], reverse=True) 
-    
     df = pd.DataFrame(leaderboard, columns=["隊伍名稱", "公司總價值", "現金", "上季淨利"])
     df.index = df.index + 1 
-    
     st.dataframe(df.style.format({
-        "公司總價值": "${:,.0f}",
-        "現金": "${:,.0f}",
-        "上季淨利": "${:,.0f}"
+        "公司總價值": "${:,.0f}", "現金": "${:,.0f}", "上季淨利": "${:,.0f}"
     }), use_container_width=True)
 
-    # --- B. 監控面板 (*** V2.7 修改刷新邏輯 ***) ---
+    # --- B. 監控面板 (*** V2.8 使用檔案讀取 ***) ---
     st.subheader("本季決策提交狀態")
     all_submitted = True 
     submitted_count = 0
     cols = st.columns(5)
     
-    # ** 直接讀取最新的 decisions 狀態 **
-    current_decisions = st.session_state.get('decisions', {})
+    # ** V2.8 直接讀取檔案 **
+    current_decisions_from_file = load_decisions_from_file()
+    # 同步 session_state (以防萬一)
+    st.session_state.decisions = current_decisions_from_file
     
     for i, team_key in enumerate(team_list):
         col = cols[i % 5]
@@ -556,8 +591,8 @@ def display_admin_dashboard():
         team_data = st.session_state.teams[team_key]
         display_name = f"{team_data['team_name']} ({team_key})" 
 
-        # ** 使用讀取到的 current_decisions 來判斷 **
-        if team_key not in current_decisions:
+        # ** 使用從檔案讀取的狀態 **
+        if team_key not in current_decisions_from_file:
             col.warning(f"🟡 {display_name}\n(尚未提交)")
             all_submitted = False
         else:
@@ -566,22 +601,18 @@ def display_admin_dashboard():
             
     st.info(f"提交進度: {submitted_count} / {len(team_list)}")
     
-    # *** V2.7 修改刷新按鈕行為 ***
+    # *** V2.8 修改刷新按鈕行為：讀取檔案並 rerun ***
     if st.button("🔄 刷新提交狀態 (Refresh Status)"):
-        # 實驗性：使用 JavaScript 強制頁面重新載入
-        js = "window.location.reload();"
-        html = f'<script>{js}</script>'
-        components.html(html, height=0, width=0)
-        # st.rerun() # 保留 st.rerun 以防 js 失效
+        # 觸發 rerun，下次載入時會自動讀取檔案
+        st.rerun() 
 
-    # --- C. 控制按鈕 ---
+    # --- C. 控制按鈕 (*** V2.8 修改重置邏輯 ***) ---
     st.subheader("遊戲控制")
     if st.button("➡️ 結算本季"):
         if not all_submitted:
             st.warning("警告：正在強制結算。未提交的隊伍將使用預設決策。")
         with st.spinner("正在執行市場結算..."):
             run_season_calculation()
-        # 結算後不需要強制重導向，st.rerun 應該足夠
         st.rerun()
 
     if st.button("♻️ !!! 重置整個遊戲 !!!"):
@@ -589,6 +620,7 @@ def display_admin_dashboard():
         st.session_state.teams = {}
         st.session_state.decisions = {}
         st.session_state.logged_in_user = None 
+        delete_decisions_file() # <--- 新增：刪除檔案
         st.success("遊戲已重置回第 1 季")
         st.rerun()
     
@@ -596,14 +628,15 @@ def display_admin_dashboard():
         st.session_state.logged_in_user = None
         st.rerun()
 
-# --- 8. 主程式 (Main App) (V2.0) ---
+# --- 8. 主程式 (Main App) (*** V2.8 修改初始化 ***) ---
 st.set_page_config(layout="wide")
 
 # --- 初始化 session_state ---
 if 'game_season' not in st.session_state:
     st.session_state.game_season = 1
     st.session_state.teams = {} 
-    st.session_state.decisions = {} 
+    # *** V2.8 嘗試從檔案載入初始 decisions ***
+    st.session_state.decisions = load_decisions_from_file() 
     st.session_state.logged_in_user = None 
 
 # --- 登入邏輯 ---
@@ -676,7 +709,9 @@ else:
         display_dashboard(team_key, current_team_data)
         st.markdown("---")
         
-        if team_key in st.session_state.decisions:
+        # *** V2.8 使用檔案讀取的 decisions ***
+        current_decisions_from_file = load_decisions_from_file()
+        if team_key in current_decisions_from_file:
             st.info(f"您已提交第 {st.session_state.game_season} 季的決策，請等待老師結算...")
         else:
             display_decision_form(team_key)
