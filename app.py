@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V2.2)
+# app.py (Nova Manufacturing Sim - V2-Framework-V2.3)
 #
-# V2.2 更新：
-# 1. (使用者要求) 將 PASSWORDS 字典中的預設密碼更換為隨機且獨特的密碼，
-#    防止學生猜到別組的密碼。
+# V2.3 更新：
+# 1. (使用者要求) 強化決策提示：加入更詳細的「風險與策略權衡」說明。
+# 2. (使用者要求) 新增自訂隊名功能：學生可在側邊欄設定，老師可在後台查看。
 
 import streamlit as st
 import pandas as pd
@@ -37,7 +37,6 @@ GLOBAL_PARAMS = {
 }
 
 # --- 2. (V2.2 安全升級) 密碼系統 ---
-# (我已幫您預設為「無法猜測」的密碼)
 PASSWORDS = {
     "admin": "admin123", # 老師的密碼 (您還是可以自己改)
     "第 1 組": "sky902",
@@ -53,9 +52,9 @@ PASSWORDS = {
 }
 team_list = [f"第 {i} 組" for i in range(1, 11)]
 
-# --- 3. 團隊狀態初始化 (V2 升級版) ---
-def init_team_state():
-    """定義一家公司 "出生時" 的狀態 (V2)"""
+# --- 3. 團隊狀態初始化 (*** V2.3 新增 team_name ***) ---
+def init_team_state(team_key): # 傳入 team_key
+    """定義一家公司 "出生時" 的狀態 (V2.3)"""
     initial_cash = 10000000
     initial_factories = 1
     initial_lines_p1 = 1
@@ -78,6 +77,9 @@ def init_team_state():
     initial_equity = total_assets
 
     return {
+        # *** V2.3 新增 ***
+        'team_name': team_key, # 預設隊名 = 組別名
+
         'BS': {
             'cash': initial_cash, 'inventory_value': inv_value,
             'fixed_assets_value': fixed_assets, 'accumulated_depreciation': 0,
@@ -105,9 +107,10 @@ def init_team_state():
     }
 
 
-# --- 4. 儀表板 (Dashboard V2) ---
+# --- 4. 儀表板 (Dashboard V2) (*** V2.3 使用 team_name ***) ---
 def display_dashboard(team_key, team_data):
-    st.header(f"📈 {team_key} 儀表板 (第 {st.session_state.game_season} 季)")
+    # *** V2.3 修改標題 ***
+    st.header(f"📈 {team_data['team_name']} ({team_key}) 儀表板 (第 {st.session_state.game_season} 季)")
     bs = team_data['BS']
     is_data = team_data['IS']
     mr = team_data['MR']
@@ -164,7 +167,7 @@ def display_dashboard(team_key, team_data):
             | **固定資產** | | **股東權益** | |
             | 廠房設備 | ${bs['fixed_assets_value']:,.0f} | 股東權益 | ${bs['shareholder_equity']:,.0f} |
             | 累計折舊 | (${bs['accumulated_depreciation']:,.0f}) | | |
-            | **總資 peculate** | **${bs['total_assets']:,.0f}** | **總負債與權益** | **${bs['total_liabilities_and_equity']:,.0f}** |
+            | **總資產** | **${bs['total_assets']:,.0f}** | **總負債與權益** | **${bs['total_liabilities_and_equity']:,.0f}** |
             """)
         st.subheader("內部資產 (非財報)")
         col1, col2, col3 = st.columns(3)
@@ -178,45 +181,47 @@ def display_dashboard(team_key, team_data):
         col4.metric("🏭 P2 庫存 (u)", f"{team_data['inventory_P2_units']:,.0f}")
 
 
-# --- 5. 決策表單 (Decision Form V2) (*** V2.0 新增提示 ***) ---
+# --- 5. 決策表單 (Decision Form V2) (*** V2.3 強化提示 ***) ---
 def display_decision_form(team_key):
     team_data = st.session_state.teams[team_key]
     with st.form(f"decision_form_{team_key}"):
-        st.header(f"📝 {team_key} - 第 {st.session_state.game_season} 季決策單")
+        # *** V2.3 修改標題 ***
+        st.header(f"📝 {team_data['team_name']} ({team_key}) - 第 {st.session_state.game_season} 季決策單")
         
         tab_p1, tab_p2, tab_prod, tab_fin = st.tabs(["P1 產品決策", "P2 產品決策", "生產與資本決策", "財務決策"])
 
         with tab_p1:
             st.subheader("P1 產品決策")
             decision_price_P1 = st.slider("P1 銷售價格", 100, 1000, value=team_data['MR']['price_p1'], step=10)
-            st.caption("提示：價格將影響您的『市場吸引力』。價格越低，吸引力越高，但毛利越低。")
+            st.info("💡 **策略提示：** 價格直接影響市佔率和毛利。 **風險：** 定價過低可能導致虧損，定價過高則可能失去市場份額給對手。")
             decision_ad_P1 = st.number_input("P1 廣告費用", min_value=0, step=10000, value=team_data['MR']['ad_p1'])
-            st.caption("提示：廣告費將影響您的『市場吸引力』。投入越高，吸引力越高，但會侵蝕您的營業淨利。")
+            st.info("💡 **策略提示：** 廣告能提升品牌知名度和市佔率。 **風險：** 廣告成本高昂，投入過多會嚴重侵蝕利潤。需觀察對手的廣告投入。")
             decision_rd_P1 = st.number_input("P1 研發費用", min_value=0, step=50000, value=0)
-            st.caption(f"提示：研發費用會累計。P1 目前 L{team_data['rd_level_P1']}，累計投入 ${team_data['rd_investment_P1']:,.0f}。")
+            st.info(f"💡 **策略提示：** 研發是長期投資，提升產品競爭力 (研發等級)。 **風險：** 短期內消耗大量現金，效果不會立刻顯現。 P1 目前 L{team_data['rd_level_P1']}，累計投入 ${team_data['rd_investment_P1']:,.0f}。")
             
         with tab_p2:
             st.subheader("P2 產品決策")
             decision_price_P2 = st.slider("P2 銷售價格", 150, 1500, value=team_data['MR']['price_p2'], step=10)
-            st.caption("提示：P2 市場與 P1 獨立。")
+            st.info("💡 **策略提示：** P2 市場與 P1 獨立。其價格策略應獨立思考。")
             decision_ad_P2 = st.number_input("P2 廣告費用", min_value=0, step=10000, value=team_data['MR']['ad_p2'])
-            st.caption("提示：P2 的廣告效果與 P1 獨立計算。")
+            st.info("💡 **策略提示：** P2 的廣告效果與 P1 獨立。您需要在兩個市場間分配廣告預算。")
             decision_rd_P2 = st.number_input("P2 研發費用", min_value=0, step=50000, value=0)
-            st.caption(f"提示：P2 目前 L{team_data['rd_level_P2']}，累計投入 ${team_data['rd_investment_P2']:,.0f}。")
+            st.info(f"💡 **策略提示：** P2 的研發也是獨立的。 P2 目前 L{team_data['rd_level_P2']}，累計投入 ${team_data['rd_investment_P2']:,.0f}。")
 
         with tab_prod:
             st.subheader("生產計畫")
             col1, col2 = st.columns(2)
             decision_produce_P1 = col1.number_input("P1 計畫產量 (單位)", min_value=0, step=100, value=0)
             decision_produce_P2 = col2.number_input("P2 計畫產量 (單位)", min_value=0, step=100, value=0)
-            st.caption(f"提示：P1 最大產能 {team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']} (需 R1 {team_data['inventory_R1_units']} u)。 "
-                       f"P2 最大產能 {team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']} (需 R2 {team_data['inventory_R2_units']} u)。")
+            st.info(f"💡 **策略提示：** 您必須生產足夠的產品來滿足預期的市場需求。 **風險：** 生產過多會導致庫存積壓、佔用現金；生產過少會錯失銷售機會 (缺貨)。"
+                    f" P1 最大產能 {team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']} (需 R1 {team_data['inventory_R1_units']} u)。 "
+                    f" P2 最大產能 {team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']} (需 R2 {team_data['inventory_R2_units']} u)。")
 
             st.subheader("原料採購")
             col1, col2 = st.columns(2)
             decision_buy_R1 = col1.number_input("採購 R1 數量 (單位)", min_value=0, step=100, value=0)
             decision_buy_R2 = col2.number_input("採購 R2 數量 (單位)", min_value=0, step=100, value=0)
-            st.caption("提示：採購的原料會在本季花費現金，但**下一季**才能用於生產 (V2 簡化版：本季即可用)。")
+            st.info("💡 **策略提示：** 必須確保有足夠原料來支持您的生產計畫。 **風險：** 採購過多原料會佔用大量現金，增加庫存成本。")
             
             st.subheader("資本投資")
             col1, col2, col3 = st.columns(3)
@@ -225,15 +230,16 @@ def display_decision_form(team_key):
             decision_build_line_p2 = col3.number_input("建置 P2 生產線 (條)", min_value=0, value=0)
             total_lines_now = team_data['lines_p1'] + team_data['lines_p2']
             total_capacity_now = team_data['factories'] * GLOBAL_PARAMS['factory_capacity']
-            st.caption(f"提示：1 座工廠 (成本 ${GLOBAL_PARAMS['factory_cost']:,}) 可容納 {GLOBAL_PARAMS['factory_capacity']} 條生產線 (P1+P2)。 "
-                       f"您目前 {team_data['factories']} 座工廠，已使用 {total_lines_now} / {total_capacity_now} 條。")
+            st.info(f"💡 **策略提示：** 擴張產能是長期策略，以應對未來市場增長。 **風險：** 建廠和建線成本高昂，且有持續的維護費，會消耗大量現金。"
+                     f" 您目前 {team_data['factories']} 座工廠，已使用 {total_lines_now} / {total_capacity_now} 條。")
 
         with tab_fin:
             st.subheader("財務決策")
             col1, col2 = st.columns(2)
             decision_loan = col1.number_input("本季銀行借款", min_value=0, step=100000, value=0)
             decision_repay = col2.number_input("本季償還貸款", min_value=0, step=100000, value=0)
-            st.caption(f"提示：您目前的銀行借款總額為 ${team_data['BS']['bank_loan']:,.0f}。本季將產生 ${team_data['BS']['bank_loan'] * GLOBAL_PARAMS['bank_loan_interest_rate_per_season']:,.0f} 的利息費用。")
+            st.info(f"💡 **策略提示：** 借款可以解決短期現金流問題，支持擴張。 **風險：** 借款會產生利息費用，降低淨利。過度借貸可能導致現金流斷裂而破產。"
+                      f" 您目前的銀行借款總額為 ${team_data['BS']['bank_loan']:,.0f} (季利率 2%)。")
         
         # --- 提交與檢查 ---
         submitted = st.form_submit_button("提交本季決策")
@@ -260,7 +266,10 @@ def display_decision_form(team_key):
                 'build_factory': decision_build_factory, 'build_line_p1': decision_build_line_p1, 'build_line_p2': decision_build_line_p2,
                 'loan': decision_loan, 'repay': decision_repay
             }
-            st.success(f"{team_key} 第 {st.session_state.game_season} 季決策已提交！等待老師結算...")
+            # *** V2.3 新增：儲存隊名 ***
+            # (我們在學生登入的 sidebar 裡處理隊名儲存)
+            
+            st.success(f"{team_data['team_name']} ({team_key}) 第 {st.session_state.game_season} 季決策已提交！等待老師結算...")
             st.rerun()
 
 # --- 6. 結算引擎 (V1.2 版) ---
@@ -272,10 +281,15 @@ def run_season_calculation():
     final_decisions = {}
     
     for team_key, team_data in teams.items():
+        # *** V2.3 確保所有隊伍都被初始化過 ***
+        if 'team_name' not in team_data: # 簡易檢查
+            st.session_state.teams[team_key] = init_team_state(team_key)
+            team_data = st.session_state.teams[team_key]
+
         if team_key in submitted_decisions:
             final_decisions[team_key] = submitted_decisions[team_key]
         else:
-            st.warning(f"警告：{team_key} 未提交決策，將使用上一季的市場決策及 0 投入。")
+            st.warning(f"警告：{team_data['team_name']} ({team_key}) 未提交決策，將使用上一季的市場決策及 0 投入。")
             final_decisions[team_key] = {
                 'price_p1': team_data['MR']['price_p1'], 'ad_p1': team_data['MR']['ad_p1'],
                 'price_p2': team_data['MR']['price_p2'], 'ad_p2': team_data['MR']['ad_p2'],
@@ -432,7 +446,7 @@ def run_season_calculation():
             bs['bank_loan'] += emergency_loan
             bs['cash'] -= interest_penalty
             bs['shareholder_equity'] -= interest_penalty 
-            st.error(f"{team_key} 現金不足！已強制申請 ${emergency_loan:,.0f} 的緊急貸款，並支付 ${interest_penalty:,.0f} 罰息。")
+            st.error(f"{team_data['team_name']} ({team_key}) 現金不足！已強制申請 ${emergency_loan:,.0f} 的緊急貸款，並支付 ${interest_penalty:,.0f} 罰息。")
 
         team_data['BS'] = bs
         team_data['IS'] = is_data
@@ -444,7 +458,7 @@ def run_season_calculation():
     st.success(f"第 {st.session_state.game_season - 1} 季結算完畢！已進入第 {st.session_state.game_season} 季。")
 
 
-# --- 7. (V2.1 修改) 老師專用函式 ---
+# --- 7. (V2.1 修改) 老師專用函式 (*** V2.3 使用 team_name ***) ---
 def calculate_company_value(bs_data):
     """計算公司總價值 (用於排行榜)"""
     value = bs_data['cash'] + \
@@ -460,61 +474,57 @@ def display_admin_dashboard():
     # --- (V2.1 新增) 學生密碼總覽 ---
     with st.expander("🔑 學生密碼總覽"):
         st.warning("請勿將此畫面展示給學生。")
-        
-        # 過濾掉 'admin'，只顯示學生的
         student_passwords = {team: pw for team, pw in PASSWORDS.items() if team != "admin"}
-        
-        # 轉換為 DataFrame 方便查看
         pw_df = pd.DataFrame.from_dict(student_passwords, orient='index', columns=['密碼'])
         pw_df.index.name = "組別"
         st.dataframe(pw_df, use_container_width=True)
         st.caption("如需修改密碼，請直接修改 app.py 檔案頂部的 PASSWORDS 字典。")
         
-    # --- A. 排行榜 ---
+    # --- A. 排行榜 (*** V2.3 使用 team_name ***) ---
     st.subheader("遊戲排行榜 (依公司總價值)")
     leaderboard = []
     for team_key in team_list:
-        if team_key in st.session_state.teams:
-            team_data = st.session_state.teams[team_key]
-            value = calculate_company_value(team_data['BS'])
-            leaderboard.append((team_key, value, team_data['BS']['cash'], team_data['IS']['net_income']))
-        else:
-            # 如果團隊還沒登入過，也顯示
-            leaderboard.append((team_key, 0, 0, 0))
+        # 確保所有隊伍都被初始化
+        if team_key not in st.session_state.teams:
+            st.session_state.teams[team_key] = init_team_state(team_key)
+            
+        team_data = st.session_state.teams[team_key]
+        value = calculate_company_value(team_data['BS'])
+        # *** V2.3 新增 team_name ***
+        leaderboard.append((team_data['team_name'], value, team_data['BS']['cash'], team_data['IS']['net_income']))
             
     leaderboard.sort(key=lambda x: x[1], reverse=True) # 依總價值排序
     
-    df = pd.DataFrame(leaderboard, columns=["團隊", "公司總價值", "現金", "上季淨利"])
+    # *** V2.3 修改欄位名稱 ***
+    df = pd.DataFrame(leaderboard, columns=["隊伍名稱", "公司總價值", "現金", "上季淨利"])
     df.index = df.index + 1 # 讓排名從 1 開始
     st.dataframe(df, use_container_width=True)
 
-    # --- B. 監控面板 ---
+    # --- B. 監控面板 (*** V2.3 使用 team_name ***) ---
     st.subheader("本季決策提交狀態")
     all_submitted = True 
     submitted_count = 0
     cols = st.columns(5)
     
-    for i, team in enumerate(team_list):
+    for i, team_key in enumerate(team_list):
         col = cols[i % 5]
-        if team not in st.session_state.teams:
-            st.session_state.teams[team] = init_team_state() # 確保所有 team 都已初始化
+        # (初始化已在排行榜部分完成)
+        team_data = st.session_state.teams[team_key]
+        display_name = f"{team_data['team_name']} ({team_key})" # 組合顯示名稱
 
-        if team not in st.session_state.decisions:
-            col.warning(f"🟡 {team}\n(尚未提交)")
+        if team_key not in st.session_state.decisions:
+            col.warning(f"🟡 {display_name}\n(尚未提交)")
             all_submitted = False
         else:
-            col.success(f"✅ {team}\n(已提交)")
+            col.success(f"✅ {display_name}\n(已提交)")
             submitted_count += 1
     st.info(f"提交進度: {submitted_count} / {len(team_list)}")
 
     # --- C. 控制按鈕 ---
     st.subheader("遊戲控制")
-    
-    # ** 核心按鈕：結算本季 **
     if st.button("➡️ 結算本季"):
         if not all_submitted:
             st.warning("警告：正在強制結算。未提交的隊伍將使用預設決策。")
-        
         with st.spinner("正在執行市場結算..."):
             run_season_calculation()
         st.rerun()
@@ -523,7 +533,7 @@ def display_admin_dashboard():
         st.session_state.game_season = 1
         st.session_state.teams = {}
         st.session_state.decisions = {}
-        st.session_state.logged_in_user = None # 登出所有人
+        st.session_state.logged_in_user = None 
         st.success("遊戲已重置回第 1 季")
         st.rerun()
     
@@ -537,9 +547,9 @@ st.set_page_config(layout="wide")
 # --- 初始化 session_state ---
 if 'game_season' not in st.session_state:
     st.session_state.game_season = 1
-    st.session_state.teams = {} # 儲存 10 組公司的 "當前狀態"
-    st.session_state.decisions = {} # 儲存 10 組公司的 "本季決策"
-    st.session_state.logged_in_user = None # 追蹤登入狀態
+    st.session_state.teams = {} 
+    st.session_state.decisions = {} 
+    st.session_state.logged_in_user = None 
 
 # --- 登入邏輯 ---
 if st.session_state.logged_in_user is None:
@@ -550,7 +560,7 @@ if st.session_state.logged_in_user is None:
     selected_team_for_login = "admin" # 預設
     
     if user_type == "🎓 學生 (玩家)":
-        selected_team_for_login = st.selectbox("請選擇您的公司 (隊伍)：", team_list)
+        selected_team_for_login = st.selectbox("請選擇您的公司 (組別)：", team_list) # V2.3 修改提示文字
     
     password = st.text_input("請輸入密碼：", type="password")
     
@@ -566,9 +576,9 @@ if st.session_state.logged_in_user is None:
             if password == PASSWORDS.get(selected_team_for_login, "WRONG"):
                 st.session_state.logged_in_user = selected_team_for_login
                 
-                # (V2.0) 確保學生登入時，該隊伍已被初始化
+                # *** V2.3 確保初始化時傳入 team_key ***
                 if selected_team_for_login not in st.session_state.teams:
-                    st.session_state.teams[selected_team_for_login] = init_team_state()
+                    st.session_state.teams[selected_team_for_login] = init_team_state(selected_team_for_login)
                     
                 st.rerun()
             else:
@@ -584,21 +594,35 @@ else:
         display_admin_dashboard()
         
     elif current_user in team_list:
-        # --- B. 學生畫面 ---
+        # --- B. 學生畫面 (*** V2.3 新增側邊欄隊名修改 ***) ---
         team_key = current_user
-        
-        # 學生登出按鈕
-        if st.sidebar.button("登出"):
-            st.session_state.logged_in_user = None
-            st.rerun()
-        st.sidebar.info(f"您已登入為： {team_key}")
         
         # (確保團隊數據存在)
         if team_key not in st.session_state.teams:
-            st.session_state.teams[team_key] = init_team_state()
+            st.session_state.teams[team_key] = init_team_state(team_key)
             
         current_team_data = st.session_state.teams[team_key]
+
+        # --- B1. 學生側邊欄 ---
+        st.sidebar.header(f"🎓 {current_team_data['team_name']} ({team_key})")
         
+        # *** V2.3 新增：修改隊名 ***
+        new_team_name = st.sidebar.text_input("修改您的隊伍名稱：", value=current_team_data['team_name'])
+        if new_team_name != current_team_data['team_name']:
+            # 檢查是否為空
+            if not new_team_name.strip():
+                st.sidebar.error("隊伍名稱不能為空！")
+            else:
+                st.session_state.teams[team_key]['team_name'] = new_team_name
+                st.sidebar.success("隊伍名稱已更新！")
+                st.rerun() # 立即刷新頁面顯示新名稱
+
+        # 登出按鈕
+        if st.sidebar.button("登出"):
+            st.session_state.logged_in_user = None
+            st.rerun()
+        
+        # --- B2. 學生主畫面 ---
         # 顯示儀表板
         display_dashboard(team_key, current_team_data)
         st.markdown("---")
