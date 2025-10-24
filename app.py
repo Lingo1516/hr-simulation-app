@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V2.0)
+# app.py (Nova Manufacturing Sim - V2-Framework-V2.2)
 #
-# V2.0 重大架構更新：
-# 1. (使用者要求) 建立「老師」vs「學生」的獨立畫面。
-# 2. (使用者要求) 新增「密碼登入系統」，區分老師和 10 個組別。
-# 3. (使用者要求) 在「管理員控制台」新增「排行榜」(依公司總價值)。
-# 4. (使用者要求) 在「學生決策單」中新增「策略提示」。
-# 5. (解惑) "實際銷售量為0" 是因為顯示的是上一季(第0季)的數據。
+# V2.2 更新：
+# 1. (使用者要求) 將 PASSWORDS 字典中的預設密碼更換為隨機且獨特的密碼，
+#    防止學生猜到別組的密碼。
 
 import streamlit as st
 import pandas as pd
@@ -39,20 +36,20 @@ GLOBAL_PARAMS = {
     }
 }
 
-# --- 2. (V2.0 新增) 密碼系統 ---
-# (您可以自行修改密碼)
+# --- 2. (V2.2 安全升級) 密碼系統 ---
+# (我已幫您預設為「無法猜測」的密碼)
 PASSWORDS = {
-    "admin": "admin123", # 老師的密碼
-    "第 1 組": "team1",
-    "第 2 組": "team2",
-    "第 3 組": "team3",
-    "第 4 組": "team4",
-    "第 5 組": "team5",
-    "第 6 組": "team6",
-    "第 7 組": "team7",
-    "第 8 組": "team8",
-    "第 9 組": "team9",
-    "第 10 組": "team10"
+    "admin": "admin123", # 老師的密碼 (您還是可以自己改)
+    "第 1 組": "sky902",
+    "第 2 組": "rock331",
+    "第 3 組": "lion774",
+    "第 4 組": "moon159",
+    "第 5 組": "tree482",
+    "第 6 組": "fire660",
+    "第 7 組": "ice112",
+    "第 8 組": "sun735",
+    "第 9 組": "king048",
+    "第 10 組": "aqua526"
 }
 team_list = [f"第 {i} 組" for i in range(1, 11)]
 
@@ -167,7 +164,7 @@ def display_dashboard(team_key, team_data):
             | **固定資產** | | **股東權益** | |
             | 廠房設備 | ${bs['fixed_assets_value']:,.0f} | 股東權益 | ${bs['shareholder_equity']:,.0f} |
             | 累計折舊 | (${bs['accumulated_depreciation']:,.0f}) | | |
-            | **總資產** | **${bs['total_assets']:,.0f}** | **總負債與權益** | **${bs['total_liabilities_and_equity']:,.0f}** |
+            | **總資 peculate** | **${bs['total_assets']:,.0f}** | **總負債與權益** | **${bs['total_liabilities_and_equity']:,.0f}** |
             """)
         st.subheader("內部資產 (非財報)")
         col1, col2, col3 = st.columns(3)
@@ -251,7 +248,7 @@ def display_decision_form(team_key):
             if decision_produce_P1 > (team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']):
                 st.error(f"P1 計畫產量 ({decision_produce_P1}) 超過 P1 總產能 ({team_data['lines_p1'] * GLOBAL_PARAMS['line_p1_capacity']})！")
                 return
-            if decision_produce_P2 > (team_data['lines_p2'] * GLOBAL_GPARAMS['line_p2_capacity']):
+            if decision_produce_P2 > (team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']):
                 st.error(f"P2 計畫產量 ({decision_produce_P2}) 超過 P2 總產能 ({team_data['lines_p2'] * GLOBAL_PARAMS['line_p2_capacity']})！")
                 return
 
@@ -447,7 +444,7 @@ def run_season_calculation():
     st.success(f"第 {st.session_state.game_season - 1} 季結算完畢！已進入第 {st.session_state.game_season} 季。")
 
 
-# --- 7. (V2.0 新增) 老師專用函式 ---
+# --- 7. (V2.1 修改) 老師專用函式 ---
 def calculate_company_value(bs_data):
     """計算公司總價值 (用於排行榜)"""
     value = bs_data['cash'] + \
@@ -460,6 +457,19 @@ def display_admin_dashboard():
     """顯示老師的控制台畫面"""
     st.header(f"👨‍🏫 管理員控制台 (第 {st.session_state.game_season} 季)")
     
+    # --- (V2.1 新增) 學生密碼總覽 ---
+    with st.expander("🔑 學生密碼總覽"):
+        st.warning("請勿將此畫面展示給學生。")
+        
+        # 過濾掉 'admin'，只顯示學生的
+        student_passwords = {team: pw for team, pw in PASSWORDS.items() if team != "admin"}
+        
+        # 轉換為 DataFrame 方便查看
+        pw_df = pd.DataFrame.from_dict(student_passwords, orient='index', columns=['密碼'])
+        pw_df.index.name = "組別"
+        st.dataframe(pw_df, use_container_width=True)
+        st.caption("如需修改密碼，請直接修改 app.py 檔案頂部的 PASSWORDS 字典。")
+        
     # --- A. 排行榜 ---
     st.subheader("遊戲排行榜 (依公司總價值)")
     leaderboard = []
@@ -596,10 +606,5 @@ else:
         # 顯示決策表單或等待畫面
         if team_key in st.session_state.decisions:
             st.info(f"您已提交第 {st.session_state.game_season} 季的決策，請等待老師結算...")
-            
-            # (V2.0 暫不開放撤銷，未來可加入)
-            # if st.button("撤銷提交 (Undo)"):
-            #     del st.session_state.decisions[team_key]
-            #     st.rerun()
         else:
             display_decision_form(team_key)
