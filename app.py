@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V2.6)
+# app.py (Nova Manufacturing Sim - V2-Framework-V2.7 - Revised Debug)
 #
-# V2.6 更新：
-# 1. (使用者要求) 在「管理員控制台」的「提交狀態」區塊新增「刷新提交狀態」按鈕，
-#    解決老師畫面狀態更新不及時的問題，無需登出再登入。
+# V2.7 更新：
+# 1. 在「管理員控制台」頂部加入 `st.write` 除錯訊息，直接顯示 `decisions` 字典內容。
+# 2. (實驗性) 將老師畫面的「刷新提交狀態」按鈕行為從 st.rerun() 改為強制頁面重導向，
+#    嘗試解決跨裝置狀態同步不及時的問題。
 
 import streamlit as st
 import pandas as pd
 import copy
+# V2.7 引入 streamlit.components.v1
+import streamlit.components.v1 as components
 
 # --- 1. 遊戲參數 (V2 升級版) ---
 GLOBAL_PARAMS = {
@@ -113,7 +116,6 @@ def balance_bs(bs_data):
         bs_data['shareholder_equity'] += diff
         bs_data['total_liabilities_and_equity'] = bs_data['total_assets']
     return bs_data
-
 
 # --- 4. 儀表板 (Dashboard V2) (V2.4 格式化) ---
 def display_dashboard(team_key, team_data):
@@ -275,7 +277,6 @@ def display_decision_form(team_key):
             }
             st.success(f"{team_data['team_name']} ({team_key}) 第 {st.session_state.game_season} 季決策已提交！等待老師結算...")
             st.rerun()
-
 
 # --- 6. 結算引擎 (V1.2 版) (V2.4 格式化) ---
 def run_season_calculation():
@@ -470,6 +471,11 @@ def display_admin_dashboard():
     """顯示老師的控制台畫面"""
     st.header(f"👨‍🏫 管理員控制台 (第 {st.session_state.game_season} 季)")
     
+    # *** V2.7 新增：除錯輸出 ***
+    st.write("--- 偵錯用 - 當前決策狀態 (decisions dict) ---")
+    st.write(st.session_state.get('decisions', {}))
+    st.write("--- 偵錯結束 ---")
+
     # --- (V2.1 新增) 學生密碼總覽 ---
     with st.expander("🔑 學生密碼總覽"):
         st.warning("請勿將此畫面展示給學生。")
@@ -533,21 +539,25 @@ def display_admin_dashboard():
         "上季淨利": "${:,.0f}"
     }), use_container_width=True)
 
-    # --- B. 監控面板 (*** V2.6 新增刷新按鈕 ***) ---
+    # --- B. 監控面板 (*** V2.7 修改刷新邏輯 ***) ---
     st.subheader("本季決策提交狀態")
     all_submitted = True 
     submitted_count = 0
     cols = st.columns(5)
     
+    # ** 直接讀取最新的 decisions 狀態 **
+    current_decisions = st.session_state.get('decisions', {})
+    
     for i, team_key in enumerate(team_list):
         col = cols[i % 5]
-        # 確保初始化 (如果之前沒運行排行榜的話)
+        # 確保初始化
         if team_key not in st.session_state.teams:
              st.session_state.teams[team_key] = init_team_state(team_key)
         team_data = st.session_state.teams[team_key]
         display_name = f"{team_data['team_name']} ({team_key})" 
 
-        if team_key not in st.session_state.decisions:
+        # ** 使用讀取到的 current_decisions 來判斷 **
+        if team_key not in current_decisions:
             col.warning(f"🟡 {display_name}\n(尚未提交)")
             all_submitted = False
         else:
@@ -556,9 +566,13 @@ def display_admin_dashboard():
             
     st.info(f"提交進度: {submitted_count} / {len(team_list)}")
     
-    # *** V2.6 新增刷新按鈕 ***
+    # *** V2.7 修改刷新按鈕行為 ***
     if st.button("🔄 刷新提交狀態 (Refresh Status)"):
-        st.rerun()
+        # 實驗性：使用 JavaScript 強制頁面重新載入
+        js = "window.location.reload();"
+        html = f'<script>{js}</script>'
+        components.html(html, height=0, width=0)
+        # st.rerun() # 保留 st.rerun 以防 js 失效
 
     # --- C. 控制按鈕 ---
     st.subheader("遊戲控制")
@@ -567,6 +581,7 @@ def display_admin_dashboard():
             st.warning("警告：正在強制結算。未提交的隊伍將使用預設決策。")
         with st.spinner("正在執行市場結算..."):
             run_season_calculation()
+        # 結算後不需要強制重導向，st.rerun 應該足夠
         st.rerun()
 
     if st.button("♻️ !!! 重置整個遊戲 !!!"):
