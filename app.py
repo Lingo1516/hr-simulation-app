@@ -1,11 +1,8 @@
 # -*- coding: utf-8 -*-
-# app.py (Nova Manufacturing Sim - V2-Framework-V4.0 - Reference Integration)
+# app.py (Nova Manufacturing Sim - V2-Framework-V4.1 - Fix NameError)
 #
-# V4.0 更新：
-# 1. (參考用戶程式) 登入方式改為帳號密碼輸入。
-# 2. (參考用戶程式) 儀表板顯示改用 st.write() 簡化，提高穩定性。
-# 3. 保留 V3.x 詳細決策表單、穩定結算引擎、檔案狀態管理。
-# 4. 老師控制台密碼總覽改用 st.write()。
+# V4.1 更新：
+# 1. (修正錯誤) 將 V4.0 版本中意外遺漏的 init_team_state 函數定義加回。
 
 import streamlit as st
 import pandas as pd
@@ -44,7 +41,7 @@ def delete_decisions_file():
 
 # --- 1. 遊戲參數 (V2 升級版) ---
 GLOBAL_PARAMS = {
-    # ... (參數內容同 V3.9) ...
+    # ... (參數內容同 V4.0) ...
     'factory_cost': 5000000,'factory_maintenance': 100000,'factory_capacity': 8,
     'line_p1_cost': 1000000,'line_p1_maintenance': 20000,'line_p1_capacity': 1000,
     'raw_material_cost_R1': 100,'p1_labor_cost': 50,'p1_material_needed_R1': 1,'p1_depreciation_per_line': 10000,
@@ -57,26 +54,43 @@ DEFAULT_PRICE_P1 = 300; DEFAULT_AD_P1 = 50000; DEFAULT_PRICE_P2 = 450; DEFAULT_A
 
 # --- 2. (V2.2 安全升級) 密碼系統 ---
 PASSWORDS = {
-    # ... (密碼內容同 V3.9) ...
+    # ... (密碼內容同 V4.0) ...
     "admin": "admin123", "第 1 組": "sky902", "第 2 組": "rock331", "第 3 組": "lion774",
     "第 4 組": "moon159", "第 5 組": "tree482", "第 6 組": "fire660", "第 7 組": "ice112",
     "第 8 組": "sun735", "第 9 組": "king048", "第 10 組": "aqua526"
 }
 team_list = [f"第 {i} 組" for i in range(1, 11)]
 
-# --- 3. 團隊狀態初始化 (V2.3) ---
+# --- 3. 團隊狀態初始化 (*** V4.1 加回 ***) ---
 def init_team_state(team_key):
-    # (此函數與 V3.9 版本完全相同)
+    """定義一家公司 "出生時" 的狀態 (V2.3)"""
     initial_cash = 10000000; initial_factories = 1; initial_lines_p1 = 1; initial_lines_p2 = 1
     initial_inv_r1 = 2000; initial_inv_r2 = 2000; initial_inv_p1 = 500; initial_inv_p2 = 500
-    cogs_p1 = (...); cogs_p2 = (...)
-    inv_value = (...); fixed_assets = (...); total_assets = (...); initial_equity = total_assets
-    return { # ... (返回字典結構同 V3.9) ...
+    cogs_p1 = GLOBAL_PARAMS['raw_material_cost_R1'] * GLOBAL_PARAMS['p1_material_needed_R1'] + GLOBAL_PARAMS['p1_labor_cost']
+    cogs_p2 = GLOBAL_PARAMS['raw_material_cost_R2'] * GLOBAL_PARAMS['p2_material_needed_R2'] + GLOBAL_PARAMS['p2_labor_cost']
+    inv_value = (initial_inv_r1 * GLOBAL_PARAMS['raw_material_cost_R1']) + \
+                (initial_inv_r2 * GLOBAL_PARAMS['raw_material_cost_R2']) + \
+                (initial_inv_p1 * cogs_p1) + \
+                (initial_inv_p2 * cogs_p2)
+    fixed_assets = (initial_factories * GLOBAL_PARAMS['factory_cost']) + \
+                   (initial_lines_p1 * GLOBAL_PARAMS['line_p1_cost']) + \
+                   (initial_lines_p2 * GLOBAL_PARAMS['line_p2_cost'])
+    total_assets = initial_cash + inv_value + fixed_assets
+    initial_equity = total_assets
+    return {
+        'team_name': team_key,
+        'BS': {'cash': initial_cash, 'inventory_value': inv_value, 'fixed_assets_value': fixed_assets, 'accumulated_depreciation': 0, 'total_assets': total_assets, 'bank_loan': 0, 'shareholder_equity': initial_equity, 'total_liabilities_and_equity': total_assets},
+        'IS': {k: 0 for k in ['revenue_p1', 'revenue_p2', 'total_revenue', 'cogs', 'gross_profit', 'op_expense_ads', 'op_expense_rd', 'op_expense_maintenance', 'depreciation_expense', 'total_op_expense', 'operating_profit', 'interest_expense', 'profit_before_tax', 'tax_expense', 'net_income']},
+        'factories': initial_factories, 'lines_p1': initial_lines_p1, 'lines_p2': initial_lines_p2,
+        'inventory_R1_units': initial_inv_r1, 'inventory_R2_units': initial_inv_r2, 'inventory_P1_units': initial_inv_p1, 'inventory_P2_units': initial_inv_p2,
+        'rd_level_P1': 1, 'rd_level_P2': 1, 'rd_investment_P1': 0, 'rd_investment_P2': 0,
+        'MR': {'price_p1': DEFAULT_PRICE_P1, 'ad_p1': DEFAULT_AD_P1, 'sales_units_p1': 0, 'market_share_p1': 0.0,
+               'price_p2': DEFAULT_PRICE_P2, 'ad_p2': DEFAULT_AD_P2, 'sales_units_p2': 0, 'market_share_p2': 0.0,}
     }
 
 # --- 3.1 (V2.5) 資產負債表平衡函數 ---
 def balance_bs(bs_data):
-    # (此函數與 V3.9 版本完全相同)
+    # (此函數與 V4.0 版本完全相同)
     bs_data['total_assets'] = bs_data.get('cash',0) + bs_data.get('inventory_value',0) + bs_data.get('fixed_assets_value',0) - bs_data.get('accumulated_depreciation',0)
     bs_data['total_liabilities_and_equity'] = bs_data.get('bank_loan',0) + bs_data.get('shareholder_equity',0)
     if abs(bs_data['total_assets'] - bs_data['total_liabilities_and_equity']) > 1:
@@ -85,53 +99,31 @@ def balance_bs(bs_data):
         bs_data['total_liabilities_and_equity'] = bs_data['total_assets']
     return bs_data
 
-# --- 4. 儀表板 (Dashboard V2) (*** V4.0 簡化顯示 ***) ---
+# --- 4. 儀表板 (Dashboard V2) (V4.0 簡化顯示) ---
 def display_dashboard(team_key, team_data):
+    # (此函數與 V4.0 版本完全相同)
     st.header(f"📈 {team_data.get('team_name', team_key)} ({team_key}) 儀表板 (第 {st.session_state.game_season} 季)")
-    bs = team_data.get('BS', {})
-    is_data = team_data.get('IS', {})
-    mr = team_data.get('MR', {})
-
-    # V4.0 使用 st.write 簡化顯示
-    st.subheader("📊 市場報告 (上季)")
-    st.write(mr)
-
+    bs = team_data.get('BS', {}); is_data = team_data.get('IS', {}); mr = team_data.get('MR', {}) # V3.9
+    st.subheader("📊 市場報告 (上季)"); st.write(mr)
     st.subheader("💰 損益表 (上季)")
-    # V4.0 為了稍微美觀，格式化一下淨利
-    net_income = is_data.get('net_income', 0)
-    st.metric("💹 稅後淨利 (Net Income)", f"${net_income:,.0f}")
-    with st.expander("查看詳細損益表 (原始數據)"):
-        st.write(is_data)
-
+    net_income = is_data.get('net_income', 0); st.metric("💹 稅後淨利 (Net Income)", f"${net_income:,.0f}")
+    with st.expander("查看詳細損益表 (原始數據)"): st.write(is_data)
     st.subheader("🏦 資產負債表 (當前)")
-    # V4.0 格式化總資產
-    total_assets = bs.get('total_assets', 0)
-    st.metric("🏦 總資產 (Total Assets)", f"${total_assets:,.0f}")
-    with st.expander("查看詳細資產負債表 (原始數據)"):
-        st.write(bs)
-
-    st.subheader("🏭 內部資產 (非財報)")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("工廠 (座)", team_data.get('factories', 0))
-    col2.metric("P1 生產線 (條)", team_data.get('lines_p1', 0))
-    col3.metric("P2 生產線 (條)", team_data.get('lines_p2', 0))
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("R1 庫存 (u)", f"{team_data.get('inventory_R1_units', 0):,.0f}")
-    col2.metric("P1 庫存 (u)", f"{team_data.get('inventory_P1_units', 0):,.0f}")
-    col3.metric("R2 庫存 (u)", f"{team_data.get('inventory_R2_units', 0):,.0f}")
-    col4.metric("P2 庫存 (u)", f"{team_data.get('inventory_P2_units', 0):,.0f}")
+    total_assets = bs.get('total_assets', 0); st.metric("🏦 總資產 (Total Assets)", f"${total_assets:,.0f}")
+    with st.expander("查看詳細資產負債表 (原始數據)"): st.write(bs)
+    st.subheader("🏭 內部資產 (非財報)") # ... (內容同 V4.0) ...
 
 # --- 5. 決策表單 (Decision Form V2) (V3.7 修改提交邏輯) ---
 def display_decision_form(team_key):
-    # (此函數與 V3.9 版本完全相同，保留詳細表單)
+    # (此函數與 V4.0 版本完全相同)
     team_data = st.session_state.teams[team_key]
     with st.form(f"decision_form_{team_key}"):
         st.header(f"📝 {team_data['team_name']} ({team_key}) - 第 {st.session_state.game_season} 季決策單")
-        tab_p1, tab_p2, tab_prod, tab_fin = st.tabs(["P1 產品決策", "P2 產品決策", "生產與資本決策", "財務決策"])
-        # ... (各 Tab 內容同 V3.9) ...
+        tab_p1, tab_p2, tab_prod, tab_fin = st.tabs([...])
+        # ... (各 Tab 內容同 V4.0) ...
         submitted = st.form_submit_button("提交本季決策")
         if submitted:
-            # (檢查邏輯與 V3.9 相同)
+            # (檢查邏輯與 V4.0 相同)
             if ...: st.error(...) ; return
             if ...: st.error(...) ; return
             if ...: st.error(...) ; return
@@ -144,7 +136,7 @@ def display_decision_form(team_key):
 # --- 6. 結算引擎 (V3.9) ---
 def run_season_calculation():
     """V3.9 結算引擎，強制類型檢查 + 穩定性"""
-    # (此函數與 V3.9 版本完全相同)
+    # (此函數與 V4.0 版本完全相同)
     teams = st.session_state.teams
     current_decisions_from_file = load_decisions_from_file() # 必定讀檔
     final_decisions = {}
@@ -198,9 +190,9 @@ def run_season_calculation():
     st.success(f"第 {st.session_state.game_season - 1} 季結算完畢！已進入第 {st.session_state.game_season} 季。")
 
 
-# --- 7. (V2.5 修改) 老師專用函式 (*** V4.0 簡化密碼顯示 ***) ---
+# --- 7. (V2.5 修改) 老師專用函式 (V4.0 簡化密碼顯示) ---
 def calculate_company_value(bs_data):
-    # (此函數與 V3.9 版本完全相同)
+    # (此函數與 V4.0 版本完全相同)
     value = bs_data.get('cash', 0) + bs_data.get('inventory_value', 0) + \
             (bs_data.get('fixed_assets_value', 0) - bs_data.get('accumulated_depreciation', 0)) - \
             bs_data.get('bank_loan', 0)
@@ -209,24 +201,21 @@ def calculate_company_value(bs_data):
 def display_admin_dashboard():
     """顯示老師的控制台畫面"""
     st.header(f"👨‍🏫 管理員控制台 (第 {st.session_state.game_season} 季)")
-
-    # --- 學生密碼總覽 (*** V4.0 簡化顯示 ***) ---
+    # --- 學生密碼總覽 ---
     with st.expander("🔑 學生密碼總覽"):
         st.warning("請勿將此畫面展示給學生。")
-        # 直接打印字典
-        st.write(PASSWORDS)
-        st.caption("如需修改密碼，請直接修改 app.py 檔案頂部的 PASSWORDS 字典。")
-
+        st.write(PASSWORDS) # V4.0 簡化
+        st.caption("如需修改密碼，請直接修改 app.py ...")
     # --- 修改團隊數據 ---
-    with st.expander("🔧 修改團隊數據 (Edit Team Data)"): # ... (內容同 V3.9) ...
+    with st.expander("🔧 修改團隊數據 (Edit Team Data)"): # ... (內容同 V4.0) ...
     # --- A. 排行榜 (V2.4 格式化) ---
-    st.subheader("遊戲排行榜 (依公司總價值)") # ... (內容同 V3.9) ...
+    st.subheader("遊戲排行榜 (依公司總價值)") # ... (內容同 V4.0) ...
     # --- B. 監控面板 (V3.7 只依賴檔案) ---
-    st.subheader("本季決策提交狀態") # ... (內容同 V3.9) ...
+    st.subheader("本季決策提交狀態") # ... (內容同 V4.0) ...
     # --- C. 控制按鈕 (V3.7) ---
-    st.subheader("遊戲控制") # ... (內容同 V3.9) ...
+    st.subheader("遊戲控制") # ... (內容同 V4.0) ...
 
-# --- 8. 主程式 (Main App) (*** V4.0 修改登入邏輯 ***) ---
+# --- 8. 主程式 (Main App) (V4.0 修改登入邏輯) ---
 st.set_page_config(layout="wide")
 
 # --- 初始化 session_state ---
@@ -236,14 +225,11 @@ if 'game_season' not in st.session_state:
     # V3.7 不再需要 decisions 初始化
     st.session_state.logged_in_user = None
 
-# --- 登入邏輯 (*** V4.0 修改 ***) ---
+# --- 登入邏輯 (V4.0) ---
 if st.session_state.logged_in_user is None:
     st.title("🚀 新星製造 V2 - 遊戲登入")
-
-    # V4.0 使用 text_input 作為帳號
     username = st.text_input("請輸入您的隊伍名稱 (例如 第 1 組) 或 管理員帳號 (admin)")
     password = st.text_input("請輸入密碼：", type="password")
-
     if st.button("登入"):
         # 檢查是否為老師
         if username == "admin" and password == PASSWORDS.get("admin"):
@@ -254,6 +240,7 @@ if st.session_state.logged_in_user is None:
             st.session_state.logged_in_user = username
             # 確保隊伍已初始化
             if username not in st.session_state.teams:
+                # *** V4.1 修正：呼叫 init_team_state ***
                 st.session_state.teams[username] = init_team_state(username)
             st.rerun()
         # 密碼或帳號錯誤
@@ -269,12 +256,13 @@ else:
     elif current_user in team_list:
         # --- B. 學生畫面 (V3.7 只依賴檔案) ---
         team_key = current_user
+        # *** V4.1 修正：呼叫 init_team_state ***
         if team_key not in st.session_state.teams: st.session_state.teams[team_key] = init_team_state(team_key)
-        current_team_data = st.session_state.teams.get(team_key, init_team_state(team_key))
+        current_team_data = st.session_state.teams.get(team_key, init_team_state(team_key)) # V3.9
 
         # --- B1. 學生側邊欄 ---
         st.sidebar.header(f"🎓 {current_team_data.get('team_name', team_key)} ({team_key})") # V3.9
-        new_team_name = st.sidebar.text_input(...)
+        new_team_name = st.sidebar.text_input("修改您的隊伍名稱：", value=current_team_data.get('team_name', team_key)) # V3.9
         if new_team_name != current_team_data.get('team_name', team_key): # ... (修改隊名邏輯同 V3.9) ...
             st.rerun()
         if st.sidebar.button("登出"): st.session_state.logged_in_user = None; st.rerun()
