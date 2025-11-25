@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V9.9 (說明文字精確化版)
+# Nova BOSS 企業經營模擬系統 V10.0 (產能初始狀態說明版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 戰情室", layout="wide", page_icon="�
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V9.9"
-DB_FILE = "nova_boss_v99.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V10.0"
+DB_FILE = "nova_boss_v10.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -48,10 +48,14 @@ def save_db(db):
     with open(DB_FILE, "wb") as f: pickle.dump(db, f)
 
 def init_team_state(team_name):
+    # 重點：初始設定給 5 條產線
     return {
         "cash": 8_000_000,
         "inventory": {"R1": 2000, "R2": 2000, "P1": 500, "P2": 500},
-        "capacity_lines": 5, "loan": 2_000_000, "rd_level": {"P1": 0, "P2": 0}, "history": []
+        "capacity_lines": 5, # <--- 這裡！初始就有 5 條
+        "loan": 2_000_000, 
+        "rd_level": {"P1": 0, "P2": 0}, 
+        "history": []
     }
 
 # ==========================================
@@ -182,7 +186,7 @@ def render_teacher_panel(db, container):
             if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. UI 渲染：學生 (文字精確化版)
+# 6. UI 渲染：學生 (含初始資產說明)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -213,22 +217,21 @@ def render_student_area(db, container):
                 with c_a:
                     st.markdown("### P1 大眾型")
                     d_p1_p = st.number_input("P1 價格", 100, 500, PARAMS['price_ref']['P1'], key="p1p")
+                    st.caption("💡 價格越低銷量越好 (高敏感)")
                     d_p1_ad = st.number_input("P1 廣告", 0, 2000000, 50000, step=10000, key="p1ad")
                 with c_b:
                     st.markdown("### P2 高端型")
                     d_p2_p = st.number_input("P2 價格", 200, 800, PARAMS['price_ref']['P2'], key="p2p")
+                    st.caption("💡 重視品質與品牌 (低敏感)")
                     d_p2_ad = st.number_input("P2 廣告", 0, 2000000, 50000, step=10000, key="p2ad")
                 
-                with st.expander("📖 行銷規則與數據", expanded=True):
-                    st.markdown("""
-                    * **價格彈性**：P1 (2.5) > P2 (1.2)。P1 降價 10% 銷量會大增；P2 降價效果不明顯。
-                    * **廣告效果**：每投入 **$50,000**，吸引力指數顯著上升。
-                    * **注意**：若無庫存可賣，廣告費用仍需全額支付。
-                    """)
+                with st.expander("📖 行銷規則", expanded=True):
+                    st.markdown("* **價格**：P1 參考價$200 (敏感)，P2 參考價$350 (不敏感)。\n* **廣告**：投入資金可提升吸引力。")
 
             with t2:
+                # --- 修正重點：清楚標示現有資產 ---
                 cap = st_tm['capacity_lines'] * 1000
-                st.info(f"🏭 工廠產能上限：{cap} (P1+P2 共用)")
+                st.warning(f"🏭 **初始資產說明**：目前已擁有 **{st_tm['capacity_lines']} 條產線**。本季立即可生產 **{cap:,}** 單位。")
                 
                 col_p1, col_p2 = st.columns(2)
                 
@@ -236,59 +239,42 @@ def render_student_area(db, container):
                     st.markdown("### 1️⃣ P1 原料採購")
                     d_buy_r1 = st.number_input("R1 採購量 (單價$100)", 0, 50000, 0, key="br1")
                     total_r1 = st_tm['inventory']['R1'] + d_buy_r1
-                    st.caption(f"✅ 可用原料 = 舊庫存 {st_tm['inventory']['R1']} + 本季採購 {d_buy_r1} = **{total_r1}**")
+                    st.caption(f"✅ 可用原料 = {total_r1}")
                     
                     st.markdown("### 2️⃣ P1 生產排程")
                     max_prod_p1 = min(cap, total_r1)
                     d_prod_p1 = st.number_input(f"P1 生產量 (上限 {max_prod_p1})", 0, 20000, 0, key="pp1")
-                    st.caption(f"💸 加工費: ${d_prod_p1 * 60:,.0f} (單位成本 $60)")
-                    
-                    if d_prod_p1 > total_r1:
-                        st.error(f"❌ 原料不足！可用只有 {total_r1}")
+                    st.caption(f"💸 加工費: ${d_prod_p1 * 60:,.0f}")
+                    if d_prod_p1 > total_r1: st.error("❌ 原料不足")
                 
                 with col_p2:
                     st.markdown("### 1️⃣ P2 原料採購")
                     d_buy_r2 = st.number_input("R2 採購量 (單價$150)", 0, 50000, 0, key="br2")
                     total_r2 = st_tm['inventory']['R2'] + d_buy_r2
-                    st.caption(f"✅ 可用原料 = 舊庫存 {st_tm['inventory']['R2']} + 本季採購 {d_buy_r2} = **{total_r2}**")
+                    st.caption(f"✅ 可用原料 = {total_r2}")
                     
                     st.markdown("### 2️⃣ P2 生產排程")
                     max_prod_p2 = min(cap, total_r2)
                     d_prod_p2 = st.number_input(f"P2 生產量 (上限 {max_prod_p2})", 0, 20000, 0, key="pp2")
-                    st.caption(f"💸 加工費: ${d_prod_p2 * 90:,.0f} (單位成本 $90)")
-                    
-                    if d_prod_p2 > total_r2:
-                        st.error(f"❌ 原料不足！可用只有 {total_r2}")
-                    if (d_prod_p1 + d_prod_p2) > cap:
-                        st.error(f"❌ 產能超載！總量 {d_prod_p1+d_prod_p2} > 上限 {cap}")
+                    st.caption(f"💸 加工費: ${d_prod_p2 * 90:,.0f}")
+                    if d_prod_p2 > total_r2: st.error("❌ 原料不足")
+                    if (d_prod_p1 + d_prod_p2) > cap: st.error("❌ 產能超載")
 
                 st.divider()
                 ca, cb = st.columns(2)
                 
-                # 產線與RD (重點修改區)
-                d_buy_ln = ca.number_input("購買產線 (條)", 0, 5, 0, key="bl", help="每條增加 1000 產能")
-                ca.caption(f"💰 費用: ${d_buy_ln * 500000:,} | 🏭 下季總產能: +{d_buy_ln*1000}")
+                d_buy_ln = ca.number_input("購買新產線 (條)", 0, 5, 0, key="bl", help="每條增加 1000 產能")
+                ca.caption(f"💰 費用: ${d_buy_ln * 500000:,} | 🏭 下季生效")
                 
-                d_rd1 = cb.number_input("RD P1 投入", 0, 500000, 0, step=50000, key="rd1", help="有投入即升級")
-                d_rd2 = cb.number_input("RD P2 投入", 0, 500000, 0, step=50000, key="rd2", help="有投入即升級")
-                if d_rd1 > 0 or d_rd2 > 0:
-                    cb.caption("🚀 效果: 有投入資金 ➡️ 下季等級+1 ➡️ 訂單量+5% (可累積)")
-                else:
-                    cb.caption("💤 目前無投入 (建議至少投入 5萬)")
+                d_rd1 = cb.number_input("RD P1 投入", 0, 500000, 0, step=50000, key="rd1")
+                d_rd2 = cb.number_input("RD P2 投入", 0, 500000, 0, step=50000, key="rd2")
+                cb.caption("🚀 有投入 ➡️ 下季等級+1 ➡️ 訂單+5%")
 
-                # 生產規則說明 (重寫)
-                with st.expander("📖 生產與研發詳細規則", expanded=True):
+                with st.expander("📖 生產與研發規則", expanded=True):
                     st.markdown("""
-                    * **擴充產線**：
-                        * 費用：每條 **$500,000**。
-                        * 效果：每買 1 條，下季總產能增加 **1,000** 單位 (買 2 條加 2,000，以此類推)。
-                    * **RD 研發**：
-                        * 費用：自由投入 (建議 > 0)。
-                        * 效果：本季有投入，下季該產品等級 **+1**。
-                        * 影響：等級每升 1 級，該產品的市場吸引力(訂單) 增加 **5%**。
-                    * **成本試算**：
-                        * P1 總成本 = 原料$100 + 加工$60 = **$160**
-                        * P2 總成本 = 原料$150 + 加工$90 = **$240**
+                    * **初始狀態**：所有組別開局即擁有 5 條產線 (5,000 產能)。
+                    * **擴充產線**：本季購買，**下季** 產能才會增加 (+1000/條)。
+                    * **RD 研發**：本季投入資金，**下季** 產品等級升級 (訂單+5%)。
                     """)
 
             with t3:
@@ -296,7 +282,7 @@ def render_student_area(db, container):
                 d_loan = ca.number_input("借款", 0, 5000000, 0, step=100000, key="ln")
                 d_pay = cb.number_input("還款", 0, 5000000, 0, step=100000, key="py")
                 with st.expander("📖 財務規則"):
-                    st.markdown("* **利率**：季利率 2% (每借 100萬，每季利息 2萬)。\n* **緊急融資**：若現金 < 0，系統將強制借高利貸補平。")
+                    st.markdown("* **利率**：季利率 2%。\n* **緊急融資**：現金 < 0 時系統強制借款。")
 
             cost = (d_prod_p1*60+d_prod_p2*90) + (d_buy_r1*100+d_buy_r2*150) + \
                    (d_p1_ad+d_p2_ad+d_rd1+d_rd2) + (d_buy_ln*500000)
