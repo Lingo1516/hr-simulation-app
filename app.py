@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V11.0 (即時運算+戰報系統版)
+# Nova BOSS 企業經營模擬系統 V11.1 (修復變數名稱錯誤版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -16,14 +16,14 @@ st.set_page_config(page_title="Nova BOSS 戰情室", layout="wide", page_icon="�
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V11.0"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V11.1"
 DB_FILE = "nova_boss_v11.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
     "capacity_per_line": 1000,
     "line_setup_cost": 500_000,
-    "rd_threshold": 50_000,      # RD 升級門檻
+    "rd_threshold": 50_000,
     "rm_cost": {"R1": 100, "R2": 150},
     "labor_cost": {"P1": 60, "P2": 90},
     "base_demand": {"P1": 25000, "P2": 18000},
@@ -48,18 +48,17 @@ def save_db(db):
     with open(DB_FILE, "wb") as f: pickle.dump(db, f)
 
 def init_team_state(team_name):
-    # 初始資產：現金800萬, 產線5條, 庫存各有一些
     return {
         "cash": 8_000_000,
         "inventory": {"R1": 2000, "R2": 2000, "P1": 500, "P2": 500},
         "capacity_lines": 5, 
         "loan": 2_000_000, 
         "rd_level": {"P1": 0, "P2": 0}, 
-        "history": [] # 紀錄每一季的營收、淨利
+        "history": []
     }
 
 # ==========================================
-# 3. 結算引擎 (含戰報生成)
+# 3. 結算引擎
 # ==========================================
 def run_simulation(db):
     season = db["season"]
@@ -73,7 +72,6 @@ def run_simulation(db):
         d = decs.get(team, {"price":{"P1":999,"P2":999}, "ad":{"P1":0,"P2":0}, "rd":{"P1":0,"P2":0}})
         st_tm = db["teams"].get(team, init_team_state(team))
         
-        # 價格與行銷分數
         p1 = d["price"]["P1"] if d["price"]["P1"] > 0 else 999
         p2 = d["price"]["P2"] if d["price"]["P2"] > 0 else 999
         
@@ -82,7 +80,6 @@ def run_simulation(db):
         scores_p1[team] = s1; t_s1 += s1
         scores_p2[team] = s2; t_s2 += s2
         
-        # RD 升級判定 (門檻制)
         if d["rd"]["P1"] >= PARAMS["rd_threshold"]: st_tm["rd_level"]["P1"] += 1
         if d["rd"]["P2"] >= PARAMS["rd_threshold"]: st_tm["rd_level"]["P2"] += 1
         db["teams"][team] = st_tm
@@ -90,26 +87,22 @@ def run_simulation(db):
     # 2. 執行結算
     for team in TEAMS_LIST:
         st_tm = db["teams"][team]; d = decs.get(team)
-        if not d: continue # 未提交者跳過
+        if not d: continue
 
-        # 庫存 = 舊 + 買
         st_tm["inventory"]["R1"] += d["buy_rm"]["R1"]
         st_tm["inventory"]["R2"] += d["buy_rm"]["R2"]
         
-        # 生產
         real_prod1 = min(d["production"]["P1"], st_tm["inventory"]["R1"])
         real_prod2 = min(d["production"]["P2"], st_tm["inventory"]["R2"])
         st_tm["inventory"]["R1"] -= real_prod1; st_tm["inventory"]["R2"] -= real_prod2
         st_tm["inventory"]["P1"] += real_prod1; st_tm["inventory"]["P2"] += real_prod2
         
-        # 銷售
         share1 = scores_p1[team]/t_s1 if t_s1>0 else 0
         share2 = scores_p2[team]/t_s2 if t_s2>0 else 0
         sale1 = min(int(PARAMS["base_demand"]["P1"]*share1), st_tm["inventory"]["P1"])
         sale2 = min(int(PARAMS["base_demand"]["P2"]*share2), st_tm["inventory"]["P2"])
         st_tm["inventory"]["P1"] -= sale1; st_tm["inventory"]["P2"] -= sale2
         
-        # 財務計算
         rev = sale1*d["price"]["P1"] + sale2*d["price"]["P2"]
         cost_mat = (d["buy_rm"]["R1"]*100 + d["buy_rm"]["R2"]*150)
         cost_mfg = (real_prod1*60 + real_prod2*90)
@@ -121,25 +114,20 @@ def run_simulation(db):
         
         st_tm["cash"] += net_cash_flow
         st_tm["loan"] += (d["finance"]["loan_add"] - d["finance"]["loan_pay"])
-        st_tm["capacity_lines"] += d["ops"]["buy_lines"] # 擴產
+        st_tm["capacity_lines"] += d["ops"]["buy_lines"]
         
-        # 緊急融資
         if st_tm["cash"] < 0:
             ems = abs(st_tm["cash"])
             st_tm["loan"] += ems
             st_tm["cash"] = 0
             
-        # 紀錄
-        net_profit = rev - cost_mat - cost_mfg - cost_opex - interest # 簡易淨利
+        net_profit = rev - cost_mat - cost_mfg - cost_opex - interest
         st_tm["history"].append({
             "Season": season, "Revenue": rev, "NetProfit": net_profit, 
             "Cash": st_tm["cash"], "Sales": sale1+sale2
         })
-        
-        # 加入排行榜資料
         leaderboard.append({"Team": team, "Revenue": rev, "Profit": net_profit, "Cash": st_tm["cash"]})
 
-    # 3. 排序與存檔
     leaderboard.sort(key=lambda x: x["Profit"], reverse=True)
     db["teacher"]["ranking"] = leaderboard
     db["season"] += 1
@@ -148,14 +136,13 @@ def run_simulation(db):
     save_db(db)
 
 # ==========================================
-# 4. 老師面板 (含戰報)
+# 4. 老師面板
 # ==========================================
 def render_teacher_panel(db, container):
     season = db["season"]
     with container:
         st.markdown(f"### 👨‍🏫 戰情室 (S{season})")
         
-        # 戰報區
         if season > 1 and db["teacher"]["ranking"]:
             with st.expander(f"🏆 上一季 (S{season-1}) 戰報", expanded=True):
                 df_rank = pd.DataFrame(db["teacher"]["ranking"])
@@ -163,7 +150,6 @@ def render_teacher_panel(db, container):
                 winner = df_rank.iloc[0]['Team']
                 st.success(f"👑 獲利王：**{winner}**")
 
-        # 監控區
         with st.expander("🚨 提交監控", expanded=True):
             status_list = []
             for t in TEAMS_LIST:
@@ -179,7 +165,6 @@ def render_teacher_panel(db, container):
             else:
                 st.warning(f"還有 {not_sub} 組未提交")
 
-        # 控制區
         with st.expander("⚙️ 設定", expanded=False):
             if st.button("🔒 鎖定/解鎖"):
                 db["teacher"]["status"] = "OPEN" if db["teacher"]["status"]=="LOCKED" else "LOCKED"
@@ -188,21 +173,18 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 5. 學生面板 (即時互動核心)
+# 5. 學生面板
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
     with container:
-        # 標題
         c1, c2 = st.columns([2, 1])
         c1.header(f"學生決策端 (Season {season})")
         
-        # 上帝視角切換
         who = c2.selectbox("切換組別", TEAMS_LIST)
         if who not in db["teams"]: db["teams"][who]=init_team_state(who); save_db(db); st.rerun()
         st_tm = db["teams"][who]
 
-        # 頂部資訊列
         st.info(f"📊 上季均價：P1 ${PARAMS['price_ref']['P1']} | P2 ${PARAMS['price_ref']['P2']}")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("💰 現金", f"${st_tm['cash']:,.0f}")
@@ -214,20 +196,13 @@ def render_student_area(db, container):
             st.error("⛔ 本季決策已鎖定，請等待老師結算。")
             return
 
-        # --- 決策輸入區 (移除 st.form 以實現即時運算) ---
-        # 為了保持輸入值，我們需要用 session_state 紀錄每個 widget 的值
-        # 這裡簡化處理，直接讀取 UI 值
-        
         tabs = st.tabs(["1. 行銷與定價", "2. 生產與供應", "3. 財務", "4. 📜 歷史財報"])
-
-        # 預設值 (若有舊決策則帶入，否則歸零)
+        
         old_dec = db["decisions"].get(season, {}).get(who, {})
-        def get_val(key, default): return old_dec.get(key, default) if isinstance(old_dec, dict) else default
-        # 針對巢狀字典的取值輔助
         def get_nest(k1, k2, default): 
             return old_dec.get(k1, {}).get(k2, default) if isinstance(old_dec, dict) else default
 
-        with tabs[0]: # 行銷
+        with tabs[0]:
             c_a, c_b = st.columns(2)
             with c_a:
                 st.markdown("##### P1 大眾產品")
@@ -240,7 +215,7 @@ def render_student_area(db, container):
                 p2_ad = st.number_input("P2 廣告費", 0, 5000000, get_nest("ad","P2", 50000), step=10000, key="p2ad")
                 st.caption(f"預估毛利: ${p2_p - 240}/個")
 
-        with tabs[1]: # 生產
+        with tabs[1]:
             cap = st_tm['capacity_lines'] * 1000
             st.success(f"🏭 目前工廠產能上限： **{cap:,}** 單位 (本季可用)")
             
@@ -267,32 +242,29 @@ def render_student_area(db, container):
 
             st.divider()
             c_c, c_d = st.columns(2)
-            # 即時顯示費用更新
             bl = c_c.number_input("購買新產線 ($50萬/條)", 0, 10, get_nest("ops","buy_lines",0), key="bl")
             c_c.write(f"💰 擴充費用: **${bl * 500000:,}** (下季生效)")
             
             rd1 = c_d.number_input("RD P1 投入", 0, 2000000, get_nest("rd","P1",0), step=50000, key="rd1")
             rd2 = c_d.number_input("RD P2 投入", 0, 2000000, get_nest("rd","P2",0), step=50000, key="rd2")
-            if rd1 >= 50000 or rd2 >= 50000: c_d.success("✅ 符合升級門檻 ($50,000)")
+            if rd1 >= 50000 or rd2 >= 50000: c_d.success("✅ 符合升級門檻")
             else: c_d.caption("ℹ️ 升級門檻: $50,000")
 
-        with tabs[2]: # 財務
+        with tabs[2]:
             c_a, c_b = st.columns(2)
             ln = c_a.number_input("新增借款", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key="ln")
             py = c_b.number_input("償還貸款", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key="py")
             st.caption(f"預計本季利息支出: ${st_tm['loan']*0.02:,.0f}")
 
-        with tabs[3]: # 歷史
+        with tabs[3]:
             if st_tm["history"]:
                 st.dataframe(pd.DataFrame(st_tm["history"]), use_container_width=True)
             else:
                 st.info("尚無歷史資料")
 
-        # --- 🧾 即時決策總覽 (Side-by-Side Calculation) ---
         st.divider()
         st.subheader("🧾 決策總覽與提交")
         
-        # 即時計算總支出
         total_cost = (pp1*60 + pp2*90) + (br1*100 + br2*150) + (p1_ad + p2_ad) + (rd1 + rd2) + (bl * 500000)
         net_finance = ln - py
         est_end_cash = st_tm['cash'] - total_cost + net_finance
@@ -302,11 +274,10 @@ def render_student_area(db, container):
         col_res2.metric("財務淨流", f"${net_finance:,.0f}")
         col_res3.metric("期末現金預估", f"${est_end_cash:,.0f}", delta_color="normal" if est_end_cash>=0 else "inverse")
         
-        # 檢查錯誤
         has_error = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2) > cap)
         
-        if est_cash < 0:
-            st.error(f"⚠️ 現金不足！預估赤字 ${est_cash:,.0f}，請增加借款。")
+        if est_end_cash < 0:
+            st.error(f"⚠️ 現金不足！預估赤字 ${est_end_cash:,.0f}，請增加借款。")
         
         if st.button("✅ 確認並提交決策", type="primary", use_container_width=True, disabled=has_error):
             new_dec = {
