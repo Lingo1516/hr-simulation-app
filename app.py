@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V13.2 (語法修復完整版)
+# Nova BOSS 企業經營模擬系統 V13.4 (負債資訊透明化版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V13.2"
-DB_FILE = "nova_boss_v13_2.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V13.4"
+DB_FILE = "nova_boss_v13_4.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -32,45 +32,28 @@ PARAMS = {
 }
 
 # ==========================================
-# 2. 輔助函式：白話文翻譯機
+# 2. 輔助函式
 # ==========================================
 def analyze_price_p1(price):
     cost = 160 
-    ref = PARAMS["price_ref"]["P1"] # 200
-    
-    if price < cost: 
-        return f"💸 **賠錢賣！** 成本$160，定價${price}，每賣一個虧 ${cost - price}！"
-    if price == cost: 
-        return "😐 **做白工**。價格等於成本，沒賺頭。"
-    
-    if price >= ref * 1.25: # > 250
-        return "😰 **太貴了！** 大眾產品定太高，消費者會跑光光。"
-    if price > ref * 1.05: # 211 ~ 250
-        return "📈 **稍高於行情**。犧牲部分銷量換取較高毛利，適合產能不足時。"
-    if price < ref * 0.95: # < 190
-        return "🔥 **殺價搶市**。價格極具競爭力，銷量會大增，請注意產能是否足夠！"
-        
-    return "✅ **標準行情**。符合大眾市場預期，銷量穩定。"
+    ref = PARAMS["price_ref"]["P1"]
+    if price < cost: return f"💸 **賠本賣！** 成本$160，每賣虧 ${cost - price}。"
+    if price == cost: return "😐 **做白工**。價格等於成本。"
+    if price >= ref * 1.25: return "😰 **太貴了**！銷量會很慘。"
+    if price > ref * 1.05: return "📈 **稍高行情**。適合產能不足時。"
+    if price < ref * 0.95: return "🔥 **殺價搶市**。銷量大增，注意產能。"
+    return "✅ **標準行情**。"
 
 def analyze_price_p2(price):
     cost = 240
-    ref = PARAMS["price_ref"]["P2"] # 350
-    
-    if price < cost: 
-        return f"💸 **賠錢賣！** 成本$240，定價${price}，虧損中。"
-    
-    if price >= ref * 1.3: # > 455
-        return "😰 **定價過高**。即使是高端產品，這價格也太離譜了。"
-    if price > ref * 1.05: # 368 ~ 455
-        return "💎 **精品策略**。鎖定頂級客群，若有投入廣告與RD效果更佳。"
-    if price < ref * 0.95: # < 332
-        return "📉 **平價高端**。用低價吸引高端客戶，薄利多銷。"
-        
-    return "✅ **合理區間**。符合高端市場行情。"
+    ref = PARAMS["price_ref"]["P2"]
+    if price < cost: return f"💸 **賠本賣！** 成本$240，每賣虧 ${cost - price}。"
+    if price >= ref * 1.3: return "😰 **太貴了**！"
+    return "✅ **合理區間**。"
 
 def analyze_cash(cash):
     if cash < 0: return "🛑 **危險！會倒閉！** 現金是負的，請去「3. 財務」借款！"
-    if cash < 1000000: return "⚠️ **危險邊緣**。現金剩不到 100 萬，建議多借一點備用。"
+    if cash < 1000000: return "⚠️ **危險邊緣**。現金剩不到 100 萬。"
     return "🟢 **資金安全**。"
 
 # ==========================================
@@ -108,7 +91,6 @@ def run_simulation(db):
     decs = db["decisions"].get(season, {})
     leaderboard = []
 
-    # 確保每一組都有決策資料 (避免 Key Error)
     for t in TEAMS_LIST:
         if t not in decs:
             decs[t] = {
@@ -118,7 +100,6 @@ def run_simulation(db):
                 "finance":{"loan_add":0,"loan_pay":0}
             }
 
-    # 1. 計算分數
     scores_p1 = {}; scores_p2 = {}; t_s1 = 0; t_s2 = 0
     for team in TEAMS_LIST:
         d = decs[team]
@@ -136,28 +117,23 @@ def run_simulation(db):
         if d["rd"]["P2"] >= PARAMS["rd_threshold"]: st_tm["rd_level"]["P2"] += 1
         db["teams"][team] = st_tm
 
-    # 2. 結算邏輯
     for team in TEAMS_LIST:
         st_tm = db["teams"][team]; d = decs[team]
 
-        # 庫存 (先加採購)
         st_tm["inventory"]["R1"] += d["buy_rm"]["R1"]
         st_tm["inventory"]["R2"] += d["buy_rm"]["R2"]
         
-        # 生產 (再扣原料)
         real_prod1 = min(d["production"]["P1"], st_tm["inventory"]["R1"])
         real_prod2 = min(d["production"]["P2"], st_tm["inventory"]["R2"])
         st_tm["inventory"]["R1"] -= real_prod1; st_tm["inventory"]["R2"] -= real_prod2
         st_tm["inventory"]["P1"] += real_prod1; st_tm["inventory"]["P2"] += real_prod2
         
-        # 銷售
         share1 = scores_p1[team]/t_s1 if t_s1>0 else 0
         share2 = scores_p2[team]/t_s2 if t_s2>0 else 0
         sale1 = min(int(PARAMS["base_demand"]["P1"]*share1), st_tm["inventory"]["P1"])
         sale2 = min(int(PARAMS["base_demand"]["P2"]*share2), st_tm["inventory"]["P2"])
         st_tm["inventory"]["P1"] -= sale1; st_tm["inventory"]["P2"] -= sale2
         
-        # 金流計算
         rev = sale1*d["price"]["P1"] + sale2*d["price"]["P2"]
         cost_mat = (d["buy_rm"]["R1"]*100 + d["buy_rm"]["R2"]*150)
         cost_mfg = (real_prod1*60 + real_prod2*90)
@@ -171,9 +147,10 @@ def run_simulation(db):
         st_tm["loan"] += (d["finance"]["loan_add"] - d["finance"]["loan_pay"])
         st_tm["capacity_lines"] += d["ops"]["buy_lines"]
         
-        # 緊急融資
         if st_tm["cash"] < 0:
-            st_tm["loan"] += abs(st_tm["cash"]); st_tm["cash"] = 0
+            ems = abs(st_tm["cash"])
+            st_tm["loan"] += ems
+            st_tm["cash"] = 0
             
         net_profit = rev - cost_mat - cost_mfg - cost_opex - interest
         st_tm["history"].append({
@@ -200,9 +177,9 @@ def render_teacher_panel(db, container):
         if season > 1:
             with st.expander(f"🏆 上一季 (S{season-1}) 戰績排行榜", expanded=True):
                 df_rank = pd.DataFrame(db["teacher"]["ranking"])
-                df_rank.columns = ["組別", "營收", "淨利 (最重要)", "手頭現金"]
+                df_rank.columns = ["組別", "本季營收", "本季淨利", "手頭現金"]
                 st.dataframe(df_rank, hide_index=True, use_container_width=True)
-                st.caption("💡 獲勝條件：通常看誰的「淨利」最高，或者誰活得最久。")
+                st.caption("💡 注意：排行榜顯示的是「該季度」的表現，而非累積總和。")
 
         with st.expander("⚙️ 遊戲控制與演示", expanded=True):
             status_list = []
@@ -241,7 +218,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板
+# 6. 學生面板 (數據同步修正版)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -254,11 +231,20 @@ def render_student_area(db, container):
         st_tm = db["teams"][who]
 
         st.info("👇 請依照 **Step 1 -> Step 2 -> Step 3** 的順序完成決策。")
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("💰 現金 (最重要)", f"${st_tm['cash']:,.0f}", delta="沒錢會倒閉", delta_color="inverse")
-        m2.metric("📦 原料庫存", f"R1: {st_tm['inventory']['R1']} | R2: {st_tm['inventory']['R2']}")
-        m3.metric("🏭 產線數", f"{st_tm['capacity_lines']} 條")
-        m4.metric("🏆 累積淨利", f"${sum(h['NetProfit'] for h in st_tm['history']):,.0f}")
+        
+        last_season_profit = st_tm['history'][-1]['NetProfit'] if st_tm['history'] else 0
+        cash_val = st_tm['cash']
+        cash_delta = "資金充裕" if cash_val > 2000000 else ("注意資金" if cash_val > 0 else "沒錢會倒閉")
+        cash_color = "normal" if cash_val > 2000000 else ("off" if cash_val > 0 else "inverse")
+
+        # --- 儀表板 (新增：負債顯示) ---
+        # 這裡把 負債 獨立出來顯示，並且標註利息
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("💰 現金", f"${cash_val:,.0f}", delta=cash_delta, delta_color=cash_color)
+        m2.metric("🏦 銀行負債", f"${st_tm['loan']:,.0f}", delta=f"-${st_tm['loan']*0.02:,.0f} 利息/季", delta_color="inverse")
+        m3.metric("📉 上季淨利", f"${last_season_profit:,.0f}")
+        m4.metric("🏭 產線數", f"{st_tm['capacity_lines']} 條")
+        m5.metric("📦 庫存", f"{st_tm['inventory']['P1']+st_tm['inventory']['P2']} 個")
 
         if db["teacher"]["status"] == "LOCKED":
             st.error("⛔ 老師正在結算中，請稍候..."); return
@@ -327,6 +313,7 @@ def render_student_area(db, container):
                     st.success(f"✅ 安全：付完錢後還剩 ${pre_cash:,.0f}。")
 
             with c_fn2:
+                st.warning(f"📢 初始狀態：本團隊目前負債 **${st_tm['loan']:,}** (承接舊工廠貸款)。")
                 ln = st.number_input("跟銀行借款 (+)", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key="ln")
                 py = st.number_input("償還貸款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key="py")
 
