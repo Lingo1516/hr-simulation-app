@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V13.6 (儀表板防截斷優化版)
+# Nova BOSS 企業經營模擬系統 V13.7 (財務流向可視化版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V13.6"
-DB_FILE = "nova_boss_v13_6.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V13.7"
+DB_FILE = "nova_boss_v13_7.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -218,7 +218,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板 (儀表板顯示優化版)
+# 6. 學生面板 (現金流向分解版)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -232,30 +232,42 @@ def render_student_area(db, container):
 
         st.info("👇 請依照 **Step 1 -> Step 2 -> Step 3** 的順序完成決策。")
         
-        last_season_profit = st_tm['history'][-1]['NetProfit'] if st_tm['history'] else 0
-        cash_val = st_tm['cash']
-        cash_delta = "資金充裕" if cash_val > 2000000 else ("注意資金" if cash_val > 0 else "沒錢會倒閉")
-        cash_color = "normal" if cash_val > 2000000 else ("off" if cash_val > 0 else "inverse")
+        if db["teacher"]["status"] == "LOCKED":
+            st.error("⛔ 老師正在結算中，請稍候..."); return
 
-        # --- 儀表板 (拆成 2 列，避免被卡掉) ---
-        st.markdown("###### 💰 財務狀況")
-        f1, f2, f3 = st.columns(3)
-        f1.metric("現金餘額", f"${cash_val:,.0f}", delta=cash_delta, delta_color=cash_color)
-        f2.metric("銀行負債", f"${st_tm['loan']:,.0f}", delta=f"-${st_tm['loan']*0.02:,.0f} 利息/季", delta_color="inverse")
-        f3.metric("上季淨利", f"${last_season_profit:,.0f}", help="跟老師排行榜上的數字一致")
+        # --- 財務流向計算 (Logic) ---
+        # 計算「上季餘額」
+        current_cash = st_tm['cash']
+        if not st_tm['history']:
+            start_cash = 8000000 # 初始金額
+        else:
+            # 如果有歷史，上季餘額就是倒數第二筆的現金，或是初始值
+            if len(st_tm['history']) == 1:
+                start_cash = 8000000
+            else:
+                start_cash = st_tm['history'][-2]['Cash']
         
-        st.markdown("###### 🏭 營運狀況")
-        # 這裡改成 5 欄，獨立顯示，保證不截斷
+        net_change = current_cash - start_cash
+        change_symbol = "+" if net_change >= 0 else ""
+        change_color = "normal" if net_change >= 0 else "inverse"
+
+        # --- 儀表板 (Layout) ---
+        st.markdown("###### 💰 資金流向 (Cash Flow)")
+        c_f1, c_f2, c_f3, c_f4 = st.columns(4)
+        c_f1.metric("1. 上季餘額", f"${start_cash:,.0f}")
+        c_f2.metric("2. 本季變動", f"{change_symbol}${net_change:,.0f}", delta="淨現金流", delta_color=change_color)
+        c_f3.metric("3. 目前餘額", f"${current_cash:,.0f}", delta="可用資金")
+        c_f4.metric("🏦 銀行負債", f"${st_tm['loan']:,.0f}", delta="利息 -$40,000/季", delta_color="inverse")
+
+        st.markdown("###### 🏭 營運庫存")
         o1, o2, o3, o4, o5 = st.columns(5)
         o1.metric("R1 原料", f"{st_tm['inventory']['R1']}")
         o2.metric("R2 原料", f"{st_tm['inventory']['R2']}")
         o3.metric("P1 成品", f"{st_tm['inventory']['P1']}")
         o4.metric("P2 成品", f"{st_tm['inventory']['P2']}")
-        o5.metric("產線數", f"{st_tm['capacity_lines']} 條")
+        o5.metric("產線", f"{st_tm['capacity_lines']} 條")
 
-        if db["teacher"]["status"] == "LOCKED":
-            st.error("⛔ 老師正在結算中，請稍候..."); return
-
+        # --- 決策區 ---
         old_dec = db["decisions"].get(season, {}).get(who, {})
         def get_nest(k1, k2, d): return old_dec.get(k1, {}).get(k2, d) if isinstance(old_dec, dict) else d
 
