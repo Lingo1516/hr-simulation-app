@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V13.5 (庫存顯示修正版)
+# Nova BOSS 企業經營模擬系統 V13.6 (儀表板防截斷優化版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V13.5"
-DB_FILE = "nova_boss_v13_5.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V13.6"
+DB_FILE = "nova_boss_v13_6.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -218,7 +218,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板 (V13.5 儀表板分流版)
+# 6. 學生面板 (儀表板顯示優化版)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -237,20 +237,21 @@ def render_student_area(db, container):
         cash_delta = "資金充裕" if cash_val > 2000000 else ("注意資金" if cash_val > 0 else "沒錢會倒閉")
         cash_color = "normal" if cash_val > 2000000 else ("off" if cash_val > 0 else "inverse")
 
-        # --- 儀表板 (分為財務與營運兩行，清楚標示原料與成品) ---
-        # 第一行：財務狀況
+        # --- 儀表板 (拆成 2 列，避免被卡掉) ---
         st.markdown("###### 💰 財務狀況")
         f1, f2, f3 = st.columns(3)
         f1.metric("現金餘額", f"${cash_val:,.0f}", delta=cash_delta, delta_color=cash_color)
         f2.metric("銀行負債", f"${st_tm['loan']:,.0f}", delta=f"-${st_tm['loan']*0.02:,.0f} 利息/季", delta_color="inverse")
-        f3.metric("上季淨利", f"${last_season_profit:,.0f}", help="此數字即為老師排行榜上的數字")
+        f3.metric("上季淨利", f"${last_season_profit:,.0f}", help="跟老師排行榜上的數字一致")
         
-        # 第二行：營運狀況 (拆開原料與成品)
         st.markdown("###### 🏭 營運狀況")
-        o1, o2, o3 = st.columns(3)
-        o1.metric("📦 原料庫存 (R)", f"R1: {st_tm['inventory']['R1']} | R2: {st_tm['inventory']['R2']}")
-        o2.metric("🎁 成品庫存 (P)", f"P1: {st_tm['inventory']['P1']} | P2: {st_tm['inventory']['P2']}")
-        o3.metric("🏭 產線規模", f"{st_tm['capacity_lines']} 條")
+        # 這裡改成 5 欄，獨立顯示，保證不截斷
+        o1, o2, o3, o4, o5 = st.columns(5)
+        o1.metric("R1 原料", f"{st_tm['inventory']['R1']}")
+        o2.metric("R2 原料", f"{st_tm['inventory']['R2']}")
+        o3.metric("P1 成品", f"{st_tm['inventory']['P1']}")
+        o4.metric("P2 成品", f"{st_tm['inventory']['P2']}")
+        o5.metric("產線數", f"{st_tm['capacity_lines']} 條")
 
         if db["teacher"]["status"] == "LOCKED":
             st.error("⛔ 老師正在結算中，請稍候..."); return
