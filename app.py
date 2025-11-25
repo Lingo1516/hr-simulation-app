@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V13.7 (財務流向可視化版)
+# Nova BOSS 企業經營模擬系統 V14.0 (三段式資金橋版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V13.7"
-DB_FILE = "nova_boss_v13_7.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V14.0"
+DB_FILE = "nova_boss_v14.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -120,6 +120,9 @@ def run_simulation(db):
     for team in TEAMS_LIST:
         st_tm = db["teams"][team]; d = decs[team]
 
+        # 紀錄期初現金 (為了報表)
+        start_cash = st_tm["cash"]
+
         st_tm["inventory"]["R1"] += d["buy_rm"]["R1"]
         st_tm["inventory"]["R2"] += d["buy_rm"]["R2"]
         
@@ -141,10 +144,13 @@ def run_simulation(db):
         cost_capex = (d["ops"]["buy_lines"]*500000)
         interest = st_tm["loan"] * 0.02
         
-        net_cash_flow = rev - cost_mat - cost_mfg - cost_opex - cost_capex - interest + d["finance"]["loan_add"] - d["finance"]["loan_pay"]
+        # 總支出
+        total_expense = cost_mat + cost_mfg + cost_opex + cost_capex + interest
         
-        st_tm["cash"] += net_cash_flow
-        st_tm["loan"] += (d["finance"]["loan_add"] - d["finance"]["loan_pay"])
+        net_loan = d["finance"]["loan_add"] - d["finance"]["loan_pay"]
+        
+        st_tm["cash"] += (rev - total_expense + net_loan)
+        st_tm["loan"] += net_loan
         st_tm["capacity_lines"] += d["ops"]["buy_lines"]
         
         if st_tm["cash"] < 0:
@@ -152,10 +158,17 @@ def run_simulation(db):
             st_tm["loan"] += ems
             st_tm["cash"] = 0
             
-        net_profit = rev - cost_mat - cost_mfg - cost_opex - interest
+        net_profit = rev - total_expense
+        
+        # 紀錄詳細歷史
         st_tm["history"].append({
-            "Season": season, "Revenue": rev, "NetProfit": net_profit, 
-            "Cash": st_tm["cash"], "Sales": sale1+sale2
+            "Season": season, 
+            "StartCash": start_cash, # 期初
+            "Revenue": rev, 
+            "Expense": total_expense, # 總支出
+            "NetProfit": net_profit, 
+            "EndCash": st_tm["cash"], # 期末
+            "Sales": sale1+sale2
         })
         leaderboard.append({"Team": team, "Revenue": rev, "Profit": net_profit, "Cash": st_tm["cash"]})
 
@@ -218,7 +231,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板 (現金流向分解版)
+# 6. 學生面板 (資金橋版)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -230,44 +243,64 @@ def render_student_area(db, container):
         if who not in db["teams"]: db["teams"][who]=init_team_state(who); save_db(db); st.rerun()
         st_tm = db["teams"][who]
 
-        st.info("👇 請依照 **Step 1 -> Step 2 -> Step 3** 的順序完成決策。")
+        # --- 1. 資金橋 (Financial Bridge) ---
+        # 邏輯：顯示 S(N-1) 的結果 -> S(N) 的期初
         
+        st.markdown("### 💰 資金流向 (上一季結果 -> 本季期初)")
+        
+        if not st_tm['history']:
+            # 第一季初始狀態
+            last_rev = 0
+            last_exp = 0
+            last_net = 0
+            start_cash_s1 = 8000000
+            current_cash = 8000000
+            
+            b1, b2, b3, b4, b5 = st.columns(5)
+            b1.metric("1. 初始資金", f"${start_cash_s1:,.0f}")
+            b2.metric("2. 上季營收", "$0")
+            b3.metric("3. 上季支出", "$0")
+            b4.metric("4. 淨變動", "$0")
+            b5.metric("5. 本季期初現金", f"${current_cash:,.0f}", delta="由此開始")
+            
+        else:
+            # 第二季以後，抓歷史資料
+            last_rec = st_tm['history'][-1] # 抓最後一筆(上一季)
+            
+            b1, b2, b3, b4, b5 = st.columns(5)
+            b1.metric(f"1. S{season-1} 期初", f"${last_rec['StartCash']:,.0f}", help="上一季開始時的錢")
+            b2.metric(f"2. S{season-1} 營收", f"+${last_rec['Revenue']:,.0f}", delta="賺進來的")
+            b3.metric(f"3. S{season-1} 支出", f"-${last_rec['Expense']:,.0f}", delta="花掉的", delta_color="inverse")
+            
+            net_change = last_rec['Revenue'] - last_rec['Expense']
+            b4.metric(f"4. 淨現金流", f"{net_change:+,.0f}", delta="盈虧結果")
+            
+            b5.metric(f"5. S{season} 期初現金", f"${st_tm['cash']:,.0f}", delta="本季可用", delta_color="normal")
+
+        st.divider()
+
+        # --- 2. 庫存與負債儀表板 ---
+        col_info1, col_info2 = st.columns([2, 1])
+        with col_info1:
+            st.markdown("###### 🏭 營運庫存")
+            o1, o2, o3, o4, o5 = st.columns(5)
+            o1.metric("R1 原料", f"{st_tm['inventory']['R1']}")
+            o2.metric("R2 原料", f"{st_tm['inventory']['R2']}")
+            o3.metric("P1 成品", f"{st_tm['inventory']['P1']}")
+            o4.metric("P2 成品", f"{st_tm['inventory']['P2']}")
+            o5.metric("產線數", f"{st_tm['capacity_lines']}")
+        
+        with col_info2:
+            st.markdown("###### 🏦 負債狀況")
+            st.metric("銀行貸款總額", f"${st_tm['loan']:,.0f}", delta=f"利息支出 -${st_tm['loan']*0.02:,.0f}/季", delta_color="inverse")
+
         if db["teacher"]["status"] == "LOCKED":
             st.error("⛔ 老師正在結算中，請稍候..."); return
 
-        # --- 財務流向計算 (Logic) ---
-        # 計算「上季餘額」
-        current_cash = st_tm['cash']
-        if not st_tm['history']:
-            start_cash = 8000000 # 初始金額
-        else:
-            # 如果有歷史，上季餘額就是倒數第二筆的現金，或是初始值
-            if len(st_tm['history']) == 1:
-                start_cash = 8000000
-            else:
-                start_cash = st_tm['history'][-2]['Cash']
+        # --- 3. 決策輸入區 ---
+        st.markdown("---")
+        st.info("👇 請依照 **Step 1 -> Step 2 -> Step 3** 的順序完成決策。")
         
-        net_change = current_cash - start_cash
-        change_symbol = "+" if net_change >= 0 else ""
-        change_color = "normal" if net_change >= 0 else "inverse"
-
-        # --- 儀表板 (Layout) ---
-        st.markdown("###### 💰 資金流向 (Cash Flow)")
-        c_f1, c_f2, c_f3, c_f4 = st.columns(4)
-        c_f1.metric("1. 上季餘額", f"${start_cash:,.0f}")
-        c_f2.metric("2. 本季變動", f"{change_symbol}${net_change:,.0f}", delta="淨現金流", delta_color=change_color)
-        c_f3.metric("3. 目前餘額", f"${current_cash:,.0f}", delta="可用資金")
-        c_f4.metric("🏦 銀行負債", f"${st_tm['loan']:,.0f}", delta="利息 -$40,000/季", delta_color="inverse")
-
-        st.markdown("###### 🏭 營運庫存")
-        o1, o2, o3, o4, o5 = st.columns(5)
-        o1.metric("R1 原料", f"{st_tm['inventory']['R1']}")
-        o2.metric("R2 原料", f"{st_tm['inventory']['R2']}")
-        o3.metric("P1 成品", f"{st_tm['inventory']['P1']}")
-        o4.metric("P2 成品", f"{st_tm['inventory']['P2']}")
-        o5.metric("產線", f"{st_tm['capacity_lines']} 條")
-
-        # --- 決策區 ---
         old_dec = db["decisions"].get(season, {}).get(who, {})
         def get_nest(k1, k2, d): return old_dec.get(k1, {}).get(k2, d) if isinstance(old_dec, dict) else d
 
@@ -332,7 +365,6 @@ def render_student_area(db, container):
                     st.success(f"✅ 安全：付完錢後還剩 ${pre_cash:,.0f}。")
 
             with c_fn2:
-                st.warning(f"📢 初始狀態：本團隊目前負債 **${st_tm['loan']:,}** (承接舊工廠貸款)。")
                 ln = st.number_input("跟銀行借款 (+)", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key="ln")
                 py = st.number_input("償還貸款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key="py")
 
