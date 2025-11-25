@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V14.2 (帳目明細展開版)
+# Nova BOSS 企業經營模擬系統 V14.3 (詳細算式透視版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V14.2"
-DB_FILE = "nova_boss_v14_2.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V14.3"
+DB_FILE = "nova_boss_v14_3.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -84,7 +84,7 @@ def init_team_state(team_name):
     }
 
 # ==========================================
-# 4. 結算引擎 (含詳細帳目紀錄)
+# 4. 結算引擎 (升級：紀錄詳細算式參數)
 # ==========================================
 def run_simulation(db):
     season = db["season"]
@@ -121,9 +121,9 @@ def run_simulation(db):
     for team in TEAMS_LIST:
         st_tm = db["teams"][team]; d = decs[team]
         
-        # 紀錄期初
         start_cash = st_tm["cash"]
 
+        # 庫存
         st_tm["inventory"]["R1"] += d["buy_rm"]["R1"]
         st_tm["inventory"]["R2"] += d["buy_rm"]["R2"]
         
@@ -132,25 +132,34 @@ def run_simulation(db):
         st_tm["inventory"]["R1"] -= real_prod1; st_tm["inventory"]["R2"] -= real_prod2
         st_tm["inventory"]["P1"] += real_prod1; st_tm["inventory"]["P2"] += real_prod2
         
+        # 銷售
         share1 = scores_p1[team]/t_s1 if t_s1>0 else 0
         share2 = scores_p2[team]/t_s2 if t_s2>0 else 0
         sale1 = min(int(PARAMS["base_demand"]["P1"]*share1), st_tm["inventory"]["P1"])
         sale2 = min(int(PARAMS["base_demand"]["P2"]*share2), st_tm["inventory"]["P2"])
         st_tm["inventory"]["P1"] -= sale1; st_tm["inventory"]["P2"] -= sale2
         
-        # --- 財務明細 ---
+        # --- 財務明細計算 ---
         rev_p1 = sale1 * d["price"]["P1"]
         rev_p2 = sale2 * d["price"]["P2"]
         rev = rev_p1 + rev_p2
         
-        cost_mat = (d["buy_rm"]["R1"]*100 + d["buy_rm"]["R2"]*150)
-        cost_mfg = (real_prod1*60 + real_prod2*90)
-        cost_ad = (d["ad"]["P1"]+d["ad"]["P2"])
-        cost_rd = (d["rd"]["P1"]+d["rd"]["P2"])
+        cost_mat_r1 = d["buy_rm"]["R1"] * 100
+        cost_mat_r2 = d["buy_rm"]["R2"] * 150
+        cost_mat = cost_mat_r1 + cost_mat_r2
+        
+        cost_mfg_p1 = real_prod1 * 60
+        cost_mfg_p2 = real_prod2 * 90
+        cost_mfg = cost_mfg_p1 + cost_mfg_p2
+        
+        cost_ad = (d["ad"]["P1"] + d["ad"]["P2"])
+        cost_rd = (d["rd"]["P1"] + d["rd"]["P2"])
+        cost_opex = cost_ad + cost_rd
+        
         cost_capex = (d["ops"]["buy_lines"]*500000)
         interest = st_tm["loan"] * 0.02
         
-        total_expense = cost_mat + cost_mfg + cost_ad + cost_rd + cost_capex + interest
+        total_expense = cost_mat + cost_mfg + cost_opex + cost_capex + interest
         
         net_loan = d["finance"]["loan_add"] - d["finance"]["loan_pay"]
         st_tm["cash"] += (rev - total_expense + net_loan)
@@ -164,6 +173,7 @@ def run_simulation(db):
             
         net_profit = rev - total_expense
         
+        # 紀錄詳細 Breakdown (含數量參數)
         st_tm["history"].append({
             "Season": season, 
             "StartCash": start_cash, 
@@ -173,10 +183,18 @@ def run_simulation(db):
             "EndCash": st_tm["cash"], 
             "Sales": sale1+sale2,
             "Details": {
-                "RevP1": rev_p1, "RevP2": rev_p2,
-                "CostMat": cost_mat, "CostMfg": cost_mfg,
+                # 營收因子
+                "SaleQtyP1": sale1, "PriceP1": d["price"]["P1"], "RevP1": rev_p1,
+                "SaleQtyP2": sale2, "PriceP2": d["price"]["P2"], "RevP2": rev_p2,
+                # 成本因子
+                "BuyQtyR1": d["buy_rm"]["R1"], "CostMatR1": cost_mat_r1,
+                "BuyQtyR2": d["buy_rm"]["R2"], "CostMatR2": cost_mat_r2,
+                "ProdQtyP1": real_prod1, "CostMfgP1": cost_mfg_p1,
+                "ProdQtyP2": real_prod2, "CostMfgP2": cost_mfg_p2,
+                # 費用因子
                 "CostAd": cost_ad, "CostRD": cost_rd,
-                "CostCapex": cost_capex, "Interest": interest
+                "BuyLineQty": d["ops"]["buy_lines"], "CostCapex": cost_capex,
+                "LoanAmt": st_tm["loan"], "Interest": interest
             }
         })
         leaderboard.append({"Team": team, "Revenue": rev, "Profit": net_profit, "Cash": st_tm["cash"]})
@@ -237,7 +255,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板 (含帳目展開)
+# 6. 學生面板 (含詳細算式)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -263,31 +281,35 @@ def render_student_area(db, container):
         else:
             last_rec = st_tm['history'][-1]
             net_change = last_rec['Revenue'] - last_rec['Expense']
+            dt = last_rec.get("Details", {})
             
             st.markdown("### 💰 資金流向 (上一季結果分解)")
             
-            # 上層：總覽
+            # 上層
             r1_c1, r1_c2, r1_c3 = st.columns(3)
             r1_c1.metric(f"1. S{season-1} 期初", f"${last_rec['StartCash']:,.0f}")
             r1_c2.metric(f"2. S{season-1} 營收", f"+${last_rec['Revenue']:,.0f}")
             r1_c3.metric(f"3. S{season-1} 支出", f"-${last_rec['Expense']:,.0f}")
             
-            # --- 新增：可展開的明細表 ---
-            with st.expander("🔍 點此查看：錢到底花去哪了？ (帳目明細)", expanded=False):
-                dt = last_rec.get("Details", {})
+            # --- 🔍 明細展開區 (格式優化) ---
+            with st.expander("🔍 點此查看：詳細帳目算式 (Drill-down)", expanded=False):
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
                     st.success(f"**🟢 營收細項 (+${last_rec['Revenue']:,.0f})**")
-                    st.write(f"- P1 銷售額: **${dt.get('RevP1', 0):,.0f}**")
-                    st.write(f"- P2 銷售額: **${dt.get('RevP2', 0):,.0f}**")
+                    st.markdown(f"""
+                    * **P1 銷售**: {dt.get('SaleQtyP1',0)}個 × ${dt.get('PriceP1',0)} = **${dt.get('RevP1',0):,.0f}**
+                    * **P2 銷售**: {dt.get('SaleQtyP2',0)}個 × ${dt.get('PriceP2',0)} = **${dt.get('RevP2',0):,.0f}**
+                    """)
                 with col_d2:
                     st.error(f"**🔴 支出細項 (-${last_rec['Expense']:,.0f})**")
-                    st.write(f"- 原料採購: **${dt.get('CostMat', 0):,.0f}**")
-                    st.write(f"- 生產加工: **${dt.get('CostMfg', 0):,.0f}**")
-                    st.write(f"- 行銷研發: **${dt.get('CostAd', 0) + dt.get('CostRD', 0):,.0f}**")
-                    st.write(f"- 擴充產線: **${dt.get('CostCapex', 0):,.0f}**")
-                    st.write(f"- 銀行利息: **${dt.get('Interest', 0):,.0f}**")
-            # ---------------------------
+                    st.markdown(f"""
+                    * **原料採購**: R1(${dt.get('CostMatR1',0):,.0f}) + R2(${dt.get('CostMatR2',0):,.0f}) = **${dt.get('CostMatR1',0)+dt.get('CostMatR2',0):,.0f}**
+                    * **生產加工**: P1(${dt.get('CostMfgP1',0):,.0f}) + P2(${dt.get('CostMfgP2',0):,.0f}) = **${dt.get('CostMfgP1',0)+dt.get('CostMfgP2',0):,.0f}**
+                    * **行銷研發**: 廣告(${dt.get('CostAd',0):,.0f}) + RD(${dt.get('CostRD',0):,.0f}) = **${dt.get('CostAd',0)+dt.get('CostRD',0):,.0f}**
+                    * **資本支出**: 買產線 {dt.get('BuyLineQty',0)}條 × $50萬 = **${dt.get('CostCapex',0):,.0f}**
+                    * **銀行利息**: 負債總額 × 2% = **${dt.get('Interest',0):,.0f}**
+                    """)
+            # --------------------------------
 
             st.write("---") 
             r2_c1, r2_c2 = st.columns([1, 2])
