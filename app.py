@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V10.0 (產能初始狀態說明版)
+# Nova BOSS 企業經營模擬系統 V11.0 (即時運算+戰報系統版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -7,7 +7,6 @@ import pandas as pd
 import os
 import pickle
 import time
-from datetime import datetime
 
 # ==========================================
 # 0. 頁面設定
@@ -17,13 +16,14 @@ st.set_page_config(page_title="Nova BOSS 戰情室", layout="wide", page_icon="�
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V10.0"
-DB_FILE = "nova_boss_v10.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V11.0"
+DB_FILE = "nova_boss_v11.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
     "capacity_per_line": 1000,
     "line_setup_cost": 500_000,
+    "rd_threshold": 50_000,      # RD 升級門檻
     "rm_cost": {"R1": 100, "R2": 150},
     "labor_cost": {"P1": 60, "P2": 90},
     "base_demand": {"P1": 25000, "P2": 18000},
@@ -31,13 +31,13 @@ PARAMS = {
 }
 
 # ==========================================
-# 2. 資料庫邏輯
+# 2. 資料庫核心
 # ==========================================
 def load_db():
     if not os.path.exists(DB_FILE):
         return {
             "season": 1,
-            "teacher": {"status": "OPEN", "announcement": "歡迎來到 Nova BOSS！", "seed": 2025},
+            "teacher": {"status": "OPEN", "announcement": "歡迎來到 Nova BOSS！", "ranking": []},
             "teams": {}, "decisions": {}
         }
     try:
@@ -48,268 +48,284 @@ def save_db(db):
     with open(DB_FILE, "wb") as f: pickle.dump(db, f)
 
 def init_team_state(team_name):
-    # 重點：初始設定給 5 條產線
+    # 初始資產：現金800萬, 產線5條, 庫存各有一些
     return {
         "cash": 8_000_000,
         "inventory": {"R1": 2000, "R2": 2000, "P1": 500, "P2": 500},
-        "capacity_lines": 5, # <--- 這裡！初始就有 5 條
+        "capacity_lines": 5, 
         "loan": 2_000_000, 
         "rd_level": {"P1": 0, "P2": 0}, 
-        "history": []
+        "history": [] # 紀錄每一季的營收、淨利
     }
 
 # ==========================================
-# 3. 風險監控
-# ==========================================
-def analyze_team_risk(db, team):
-    season = db["season"]
-    state = db["teams"].get(team, init_team_state(team))
-    dec = db["decisions"].get(season, {}).get(team)
-    risk = {"cash": "⚪", "stock": "⚪", "msg": "未提交"}
-    if not dec: return risk
-
-    cost_all = (dec["production"]["P1"]*60 + dec["production"]["P2"]*90) + \
-               (dec["buy_rm"]["R1"]*100 + dec["buy_rm"]["R2"]*150) + \
-               (dec["ad"]["P1"] + dec["ad"]["P2"] + dec["rd"]["P1"] + dec["rd"]["P2"]) + \
-               (dec["ops"]["buy_lines"]*500000)
-    est_cash = state['cash'] - cost_all + dec["finance"]["loan_add"] - dec["finance"]["loan_pay"]
-    
-    if est_cash < 0: risk["cash"] = "🔴 破產"
-    elif est_cash < 1000000: risk["cash"] = "🟡 吃緊"
-    else: risk["cash"] = "🟢 安全"
-
-    avail_p1 = state["inventory"]["P1"] + dec["production"]["P1"]
-    avail_p2 = state["inventory"]["P2"] + dec["production"]["P2"]
-    if avail_p1 == 0 and avail_p2 == 0: risk["stock"] = "🔴 斷貨"
-    elif avail_p1 < 2000: risk["stock"] = "🟡 偏低"
-    else: risk["stock"] = "🟢 充足"
-    
-    risk["msg"] = f"餘額 ${est_cash/10000:.0f}萬"
-    return risk
-
-# ==========================================
-# 4. 結算引擎
+# 3. 結算引擎 (含戰報生成)
 # ==========================================
 def run_simulation(db):
     season = db["season"]
     decs = db["decisions"].get(season, {})
     
-    # 算分數
     scores_p1 = {}; scores_p2 = {}; t_s1 = 0; t_s2 = 0
+    leaderboard = []
+
+    # 1. 計算分數
     for team in TEAMS_LIST:
         d = decs.get(team, {"price":{"P1":999,"P2":999}, "ad":{"P1":0,"P2":0}, "rd":{"P1":0,"P2":0}})
         st_tm = db["teams"].get(team, init_team_state(team))
         
-        p1_p = d["price"]["P1"] if d["price"]["P1"] > 0 else 999
-        p2_p = d["price"]["P2"] if d["price"]["P2"] > 0 else 999
-
-        s1 = 100 * ((PARAMS["price_ref"]["P1"]/p1_p)**2.5) * (1+d["ad"]["P1"]/500000) * (1+st_tm["rd_level"]["P1"]*0.05)
-        s2 = 100 * ((PARAMS["price_ref"]["P2"]/p2_p)**1.2) * (1+d["ad"]["P2"]/500000) * (1+st_tm["rd_level"]["P2"]*0.05)
+        # 價格與行銷分數
+        p1 = d["price"]["P1"] if d["price"]["P1"] > 0 else 999
+        p2 = d["price"]["P2"] if d["price"]["P2"] > 0 else 999
+        
+        s1 = 100 * ((PARAMS["price_ref"]["P1"]/p1)**2.5) * (1+d["ad"]["P1"]/500000) * (1+st_tm["rd_level"]["P1"]*0.05)
+        s2 = 100 * ((PARAMS["price_ref"]["P2"]/p2)**1.2) * (1+d["ad"]["P2"]/500000) * (1+st_tm["rd_level"]["P2"]*0.05)
         scores_p1[team] = s1; t_s1 += s1
         scores_p2[team] = s2; t_s2 += s2
         
-        if d["rd"]["P1"]>0: st_tm["rd_level"]["P1"]+=1
-        if d["rd"]["P2"]>0: st_tm["rd_level"]["P2"]+=1
+        # RD 升級判定 (門檻制)
+        if d["rd"]["P1"] >= PARAMS["rd_threshold"]: st_tm["rd_level"]["P1"] += 1
+        if d["rd"]["P2"] >= PARAMS["rd_threshold"]: st_tm["rd_level"]["P2"] += 1
         db["teams"][team] = st_tm
 
-    # 結算
+    # 2. 執行結算
     for team in TEAMS_LIST:
         st_tm = db["teams"][team]; d = decs.get(team)
-        if not d: continue
-        
+        if not d: continue # 未提交者跳過
+
+        # 庫存 = 舊 + 買
         st_tm["inventory"]["R1"] += d["buy_rm"]["R1"]
         st_tm["inventory"]["R2"] += d["buy_rm"]["R2"]
         
+        # 生產
         real_prod1 = min(d["production"]["P1"], st_tm["inventory"]["R1"])
         real_prod2 = min(d["production"]["P2"], st_tm["inventory"]["R2"])
+        st_tm["inventory"]["R1"] -= real_prod1; st_tm["inventory"]["R2"] -= real_prod2
+        st_tm["inventory"]["P1"] += real_prod1; st_tm["inventory"]["P2"] += real_prod2
         
-        st_tm["inventory"]["R1"] -= real_prod1
-        st_tm["inventory"]["R2"] -= real_prod2
-        st_tm["inventory"]["P1"] += real_prod1
-        st_tm["inventory"]["P2"] += real_prod2
-        
+        # 銷售
         share1 = scores_p1[team]/t_s1 if t_s1>0 else 0
         share2 = scores_p2[team]/t_s2 if t_s2>0 else 0
         sale1 = min(int(PARAMS["base_demand"]["P1"]*share1), st_tm["inventory"]["P1"])
         sale2 = min(int(PARAMS["base_demand"]["P2"]*share2), st_tm["inventory"]["P2"])
         st_tm["inventory"]["P1"] -= sale1; st_tm["inventory"]["P2"] -= sale2
         
+        # 財務計算
         rev = sale1*d["price"]["P1"] + sale2*d["price"]["P2"]
-        cost = (d["buy_rm"]["R1"]*100 + d["buy_rm"]["R2"]*150) + \
-               (real_prod1*60 + real_prod2*90) + \
-               (d["ad"]["P1"]+d["ad"]["P2"]+d["rd"]["P1"]+d["rd"]["P2"]) + \
-               (d["ops"]["buy_lines"]*500000)
-        net_loan = d["finance"]["loan_add"] - d["finance"]["loan_pay"]
+        cost_mat = (d["buy_rm"]["R1"]*100 + d["buy_rm"]["R2"]*150)
+        cost_mfg = (real_prod1*60 + real_prod2*90)
+        cost_opex = (d["ad"]["P1"]+d["ad"]["P2"]+d["rd"]["P1"]+d["rd"]["P2"])
+        cost_capex = (d["ops"]["buy_lines"]*500000)
+        interest = st_tm["loan"] * 0.02
         
-        st_tm["cash"] += (rev - cost + net_loan)
-        st_tm["loan"] += net_loan
-        st_tm["capacity_lines"] += d["ops"]["buy_lines"]
+        net_cash_flow = rev - cost_mat - cost_mfg - cost_opex - cost_capex - interest + d["finance"]["loan_add"] - d["finance"]["loan_pay"]
         
+        st_tm["cash"] += net_cash_flow
+        st_tm["loan"] += (d["finance"]["loan_add"] - d["finance"]["loan_pay"])
+        st_tm["capacity_lines"] += d["ops"]["buy_lines"] # 擴產
+        
+        # 緊急融資
         if st_tm["cash"] < 0:
-            st_tm["loan"] += abs(st_tm["cash"]); st_tm["cash"] = 0
+            ems = abs(st_tm["cash"])
+            st_tm["loan"] += ems
+            st_tm["cash"] = 0
             
-        st_tm["history"].append({"Season":season, "Revenue":rev, "Cash":st_tm["cash"]})
+        # 紀錄
+        net_profit = rev - cost_mat - cost_mfg - cost_opex - interest # 簡易淨利
+        st_tm["history"].append({
+            "Season": season, "Revenue": rev, "NetProfit": net_profit, 
+            "Cash": st_tm["cash"], "Sales": sale1+sale2
+        })
+        
+        # 加入排行榜資料
+        leaderboard.append({"Team": team, "Revenue": rev, "Profit": net_profit, "Cash": st_tm["cash"]})
 
+    # 3. 排序與存檔
+    leaderboard.sort(key=lambda x: x["Profit"], reverse=True)
+    db["teacher"]["ranking"] = leaderboard
     db["season"] += 1
     db["teacher"]["status"] = "OPEN"
     db["decisions"] = {}
     save_db(db)
 
 # ==========================================
-# 5. UI 渲染：老師
+# 4. 老師面板 (含戰報)
 # ==========================================
 def render_teacher_panel(db, container):
     season = db["season"]
     with container:
-        st.info(f"👨‍🏫 戰情監控室｜第 {season} 季", icon="📡")
-        with st.expander("🚨 風險監控", expanded=True):
-            data = []
-            for t in TEAMS_LIST:
-                r = analyze_team_risk(db, t)
-                sub = t in db["decisions"].get(season, {})
-                data.append({"組別":t, "狀態":"✅" if sub else "❌", "現金":r["cash"], "庫存":r["stock"], "備註":r["msg"] if sub else "--"})
-            st.dataframe(pd.DataFrame(data), hide_index=True, use_container_width=True)
-            if any(d["狀態"]=="❌" for d in data): st.warning("尚有未提交組別")
-            else: st.success("全員已提交")
+        st.markdown(f"### 👨‍🏫 戰情室 (S{season})")
+        
+        # 戰報區
+        if season > 1 and db["teacher"]["ranking"]:
+            with st.expander(f"🏆 上一季 (S{season-1}) 戰報", expanded=True):
+                df_rank = pd.DataFrame(db["teacher"]["ranking"])
+                st.dataframe(df_rank, hide_index=True, use_container_width=True)
+                winner = df_rank.iloc[0]['Team']
+                st.success(f"👑 獲利王：**{winner}**")
 
-        with st.expander("⚙️ 控制台", expanded=False):
-            ann = st.text_area("公告", value=db["teacher"]["announcement"], height=60)
-            if st.button("更新公告"): db["teacher"]["announcement"]=ann; save_db(db); st.rerun()
-            c1, c2 = st.columns(2)
-            if c1.button("🔒 鎖定/解鎖"): 
+        # 監控區
+        with st.expander("🚨 提交監控", expanded=True):
+            status_list = []
+            for t in TEAMS_LIST:
+                is_sub = t in db["decisions"].get(season, {})
+                status_list.append({"組別": t, "狀態": "✅" if is_sub else "Waiting..."})
+            st.dataframe(pd.DataFrame(status_list).T, hide_index=True)
+            
+            not_sub = len(TEAMS_LIST) - len(db["decisions"].get(season, {}))
+            if not_sub == 0:
+                if st.button("🚀 執行結算", type="primary", use_container_width=True):
+                    run_simulation(db)
+                    st.balloons(); time.sleep(1); st.rerun()
+            else:
+                st.warning(f"還有 {not_sub} 組未提交")
+
+        # 控制區
+        with st.expander("⚙️ 設定", expanded=False):
+            if st.button("🔒 鎖定/解鎖"):
                 db["teacher"]["status"] = "OPEN" if db["teacher"]["status"]=="LOCKED" else "LOCKED"
                 save_db(db); st.rerun()
-            if c2.button("🚀 結算", type="primary", disabled=any(d["狀態"]=="❌" for d in data)):
-                run_simulation(db); st.balloons(); time.sleep(1); st.rerun()
-        
-        if st.button("🧨 重置系統"): 
-            if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
+            if st.button("🧨 重置遊戲"):
+                if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. UI 渲染：學生 (含初始資產說明)
+# 5. 學生面板 (即時互動核心)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
     with container:
-        c1, c2 = st.columns([1,2])
-        c1.header("學生端")
-        done = len(db["decisions"].get(season, {}))
-        c2.progress(done/len(TEAMS_LIST), f"進度: {done}/{len(TEAMS_LIST)}")
+        # 標題
+        c1, c2 = st.columns([2, 1])
+        c1.header(f"學生決策端 (Season {season})")
         
-        who = st.selectbox("👁️ 操作視角", TEAMS_LIST)
+        # 上帝視角切換
+        who = c2.selectbox("切換組別", TEAMS_LIST)
         if who not in db["teams"]: db["teams"][who]=init_team_state(who); save_db(db); st.rerun()
         st_tm = db["teams"][who]
 
-        st.info(f"📊 上季行情： P1 ${PARAMS['price_ref']['P1']} | P2 ${PARAMS['price_ref']['P2']}")
+        # 頂部資訊列
+        st.info(f"📊 上季均價：P1 ${PARAMS['price_ref']['P1']} | P2 ${PARAMS['price_ref']['P2']}")
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("現金", f"${st_tm['cash']:,.0f}")
-        m2.metric("倉庫原料", f"{st_tm['inventory']['R1']} / {st_tm['inventory']['R2']}")
-        m3.metric("倉庫成品", f"{st_tm['inventory']['P1']} / {st_tm['inventory']['P2']}")
-        m4.metric("產線", f"{st_tm['capacity_lines']} 條")
+        m1.metric("💰 現金", f"${st_tm['cash']:,.0f}")
+        m2.metric("📦 庫存(R1/R2)", f"{st_tm['inventory']['R1']} / {st_tm['inventory']['R2']}")
+        m3.metric("🏭 產線數", f"{st_tm['capacity_lines']}")
+        m4.metric("📈 RD等級", f"P1: Lv{st_tm['rd_level']['P1']} | P2: Lv{st_tm['rd_level']['P2']}")
 
-        if db["teacher"]["status"]=="LOCKED": st.error("已鎖定"); return
+        if db["teacher"]["status"] == "LOCKED":
+            st.error("⛔ 本季決策已鎖定，請等待老師結算。")
+            return
 
-        with st.form(f"form_{who}"):
-            t1, t2, t3 = st.tabs(["1. 行銷", "2. 生產與供應", "3. 財務"])
+        # --- 決策輸入區 (移除 st.form 以實現即時運算) ---
+        # 為了保持輸入值，我們需要用 session_state 紀錄每個 widget 的值
+        # 這裡簡化處理，直接讀取 UI 值
+        
+        tabs = st.tabs(["1. 行銷與定價", "2. 生產與供應", "3. 財務", "4. 📜 歷史財報"])
+
+        # 預設值 (若有舊決策則帶入，否則歸零)
+        old_dec = db["decisions"].get(season, {}).get(who, {})
+        def get_val(key, default): return old_dec.get(key, default) if isinstance(old_dec, dict) else default
+        # 針對巢狀字典的取值輔助
+        def get_nest(k1, k2, default): 
+            return old_dec.get(k1, {}).get(k2, default) if isinstance(old_dec, dict) else default
+
+        with tabs[0]: # 行銷
+            c_a, c_b = st.columns(2)
+            with c_a:
+                st.markdown("##### P1 大眾產品")
+                p1_p = st.number_input("P1 價格", 100, 600, get_nest("price","P1", 200), key="p1p")
+                p1_ad = st.number_input("P1 廣告費", 0, 5000000, get_nest("ad","P1", 50000), step=10000, key="p1ad")
+                st.caption(f"預估毛利: ${p1_p - 160}/個")
+            with c_b:
+                st.markdown("##### P2 高端產品")
+                p2_p = st.number_input("P2 價格", 200, 1000, get_nest("price","P2", 350), key="p2p")
+                p2_ad = st.number_input("P2 廣告費", 0, 5000000, get_nest("ad","P2", 50000), step=10000, key="p2ad")
+                st.caption(f"預估毛利: ${p2_p - 240}/個")
+
+        with tabs[1]: # 生產
+            cap = st_tm['capacity_lines'] * 1000
+            st.success(f"🏭 目前工廠產能上限： **{cap:,}** 單位 (本季可用)")
             
-            with t1:
-                c_a, c_b = st.columns(2)
-                with c_a:
-                    st.markdown("### P1 大眾型")
-                    d_p1_p = st.number_input("P1 價格", 100, 500, PARAMS['price_ref']['P1'], key="p1p")
-                    st.caption("💡 價格越低銷量越好 (高敏感)")
-                    d_p1_ad = st.number_input("P1 廣告", 0, 2000000, 50000, step=10000, key="p1ad")
-                with c_b:
-                    st.markdown("### P2 高端型")
-                    d_p2_p = st.number_input("P2 價格", 200, 800, PARAMS['price_ref']['P2'], key="p2p")
-                    st.caption("💡 重視品質與品牌 (低敏感)")
-                    d_p2_ad = st.number_input("P2 廣告", 0, 2000000, 50000, step=10000, key="p2ad")
+            c_a, c_b = st.columns(2)
+            with c_a:
+                st.markdown("##### P1 供應鏈")
+                br1 = st.number_input("1. 採購 R1 原料 ($100)", 0, 50000, get_nest("buy_rm","R1",0), key="br1")
+                avail_r1 = st_tm['inventory']['R1'] + br1
+                st.caption(f"可用原料: {st_tm['inventory']['R1']} + {br1} = **{avail_r1}**")
                 
-                with st.expander("📖 行銷規則", expanded=True):
-                    st.markdown("* **價格**：P1 參考價$200 (敏感)，P2 參考價$350 (不敏感)。\n* **廣告**：投入資金可提升吸引力。")
+                pp1 = st.number_input(f"2. P1 生產量 (Max:{min(cap, avail_r1)})", 0, 20000, get_nest("production","P1",0), key="pp1")
+                if pp1 > avail_r1: st.error("❌ 原料不足")
 
-            with t2:
-                # --- 修正重點：清楚標示現有資產 ---
-                cap = st_tm['capacity_lines'] * 1000
-                st.warning(f"🏭 **初始資產說明**：目前已擁有 **{st_tm['capacity_lines']} 條產線**。本季立即可生產 **{cap:,}** 單位。")
+            with c_b:
+                st.markdown("##### P2 供應鏈")
+                br2 = st.number_input("1. 採購 R2 原料 ($150)", 0, 50000, get_nest("buy_rm","R2",0), key="br2")
+                avail_r2 = st_tm['inventory']['R2'] + br2
+                st.caption(f"可用原料: {st_tm['inventory']['R2']} + {br2} = **{avail_r2}**")
                 
-                col_p1, col_p2 = st.columns(2)
-                
-                with col_p1:
-                    st.markdown("### 1️⃣ P1 原料採購")
-                    d_buy_r1 = st.number_input("R1 採購量 (單價$100)", 0, 50000, 0, key="br1")
-                    total_r1 = st_tm['inventory']['R1'] + d_buy_r1
-                    st.caption(f"✅ 可用原料 = {total_r1}")
-                    
-                    st.markdown("### 2️⃣ P1 生產排程")
-                    max_prod_p1 = min(cap, total_r1)
-                    d_prod_p1 = st.number_input(f"P1 生產量 (上限 {max_prod_p1})", 0, 20000, 0, key="pp1")
-                    st.caption(f"💸 加工費: ${d_prod_p1 * 60:,.0f}")
-                    if d_prod_p1 > total_r1: st.error("❌ 原料不足")
-                
-                with col_p2:
-                    st.markdown("### 1️⃣ P2 原料採購")
-                    d_buy_r2 = st.number_input("R2 採購量 (單價$150)", 0, 50000, 0, key="br2")
-                    total_r2 = st_tm['inventory']['R2'] + d_buy_r2
-                    st.caption(f"✅ 可用原料 = {total_r2}")
-                    
-                    st.markdown("### 2️⃣ P2 生產排程")
-                    max_prod_p2 = min(cap, total_r2)
-                    d_prod_p2 = st.number_input(f"P2 生產量 (上限 {max_prod_p2})", 0, 20000, 0, key="pp2")
-                    st.caption(f"💸 加工費: ${d_prod_p2 * 90:,.0f}")
-                    if d_prod_p2 > total_r2: st.error("❌ 原料不足")
-                    if (d_prod_p1 + d_prod_p2) > cap: st.error("❌ 產能超載")
+                pp2 = st.number_input(f"2. P2 生產量 (Max:{min(cap, avail_r2)})", 0, 20000, get_nest("production","P2",0), key="pp2")
+                if pp2 > avail_r2: st.error("❌ 原料不足")
+            
+            if (pp1 + pp2) > cap: st.error(f"❌ 產能超載! 總量 {pp1+pp2} > 上限 {cap}")
 
-                st.divider()
-                ca, cb = st.columns(2)
-                
-                d_buy_ln = ca.number_input("購買新產線 (條)", 0, 5, 0, key="bl", help="每條增加 1000 產能")
-                ca.caption(f"💰 費用: ${d_buy_ln * 500000:,} | 🏭 下季生效")
-                
-                d_rd1 = cb.number_input("RD P1 投入", 0, 500000, 0, step=50000, key="rd1")
-                d_rd2 = cb.number_input("RD P2 投入", 0, 500000, 0, step=50000, key="rd2")
-                cb.caption("🚀 有投入 ➡️ 下季等級+1 ➡️ 訂單+5%")
+            st.divider()
+            c_c, c_d = st.columns(2)
+            # 即時顯示費用更新
+            bl = c_c.number_input("購買新產線 ($50萬/條)", 0, 10, get_nest("ops","buy_lines",0), key="bl")
+            c_c.write(f"💰 擴充費用: **${bl * 500000:,}** (下季生效)")
+            
+            rd1 = c_d.number_input("RD P1 投入", 0, 2000000, get_nest("rd","P1",0), step=50000, key="rd1")
+            rd2 = c_d.number_input("RD P2 投入", 0, 2000000, get_nest("rd","P2",0), step=50000, key="rd2")
+            if rd1 >= 50000 or rd2 >= 50000: c_d.success("✅ 符合升級門檻 ($50,000)")
+            else: c_d.caption("ℹ️ 升級門檻: $50,000")
 
-                with st.expander("📖 生產與研發規則", expanded=True):
-                    st.markdown("""
-                    * **初始狀態**：所有組別開局即擁有 5 條產線 (5,000 產能)。
-                    * **擴充產線**：本季購買，**下季** 產能才會增加 (+1000/條)。
-                    * **RD 研發**：本季投入資金，**下季** 產品等級升級 (訂單+5%)。
-                    """)
+        with tabs[2]: # 財務
+            c_a, c_b = st.columns(2)
+            ln = c_a.number_input("新增借款", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key="ln")
+            py = c_b.number_input("償還貸款", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key="py")
+            st.caption(f"預計本季利息支出: ${st_tm['loan']*0.02:,.0f}")
 
-            with t3:
-                ca, cb = st.columns(2)
-                d_loan = ca.number_input("借款", 0, 5000000, 0, step=100000, key="ln")
-                d_pay = cb.number_input("還款", 0, 5000000, 0, step=100000, key="py")
-                with st.expander("📖 財務規則"):
-                    st.markdown("* **利率**：季利率 2%。\n* **緊急融資**：現金 < 0 時系統強制借款。")
+        with tabs[3]: # 歷史
+            if st_tm["history"]:
+                st.dataframe(pd.DataFrame(st_tm["history"]), use_container_width=True)
+            else:
+                st.info("尚無歷史資料")
 
-            cost = (d_prod_p1*60+d_prod_p2*90) + (d_buy_r1*100+d_buy_r2*150) + \
-                   (d_p1_ad+d_p2_ad+d_rd1+d_rd2) + (d_buy_ln*500000)
-            est_cash = st_tm['cash'] - cost + d_loan - d_pay
-            err = (d_prod_p1 > (st_tm['inventory']['R1']+d_buy_r1)) or \
-                  (d_prod_p2 > (st_tm['inventory']['R2']+d_buy_r2)) or \
-                  ((d_prod_p1+d_prod_p2) > cap)
-
-            st.markdown("---")
-            if est_cash < 0: st.error(f"⚠️ 現金不足警告: ${est_cash:,.0f}")
-            else: st.success(f"✅ 預估餘額: ${est_cash:,.0f}")
-
-            if st.form_submit_button("提交決策", type="primary", use_container_width=True, disabled=err):
-                dec = {
-                    "price":{"P1":d_p1_p,"P2":d_p2_p}, "ad":{"P1":d_p1_ad,"P2":d_p2_ad},
-                    "production":{"P1":d_prod_p1,"P2":d_prod_p2}, "buy_rm":{"R1":d_buy_r1,"R2":d_buy_r2},
-                    "rd":{"P1":d_rd1,"P2":d_rd2}, "ops":{"buy_lines":d_buy_ln,"sell_lines":0},
-                    "finance":{"loan_add":d_loan,"loan_pay":d_pay}
-                }
-                if season not in db["decisions"]: db["decisions"][season]={}
-                db["decisions"][season][who] = dec
-                save_db(db); st.toast("已保存！"); time.sleep(0.5); st.rerun()
+        # --- 🧾 即時決策總覽 (Side-by-Side Calculation) ---
+        st.divider()
+        st.subheader("🧾 決策總覽與提交")
+        
+        # 即時計算總支出
+        total_cost = (pp1*60 + pp2*90) + (br1*100 + br2*150) + (p1_ad + p2_ad) + (rd1 + rd2) + (bl * 500000)
+        net_finance = ln - py
+        est_end_cash = st_tm['cash'] - total_cost + net_finance
+        
+        col_res1, col_res2, col_res3 = st.columns(3)
+        col_res1.metric("總預估支出", f"${total_cost:,.0f}")
+        col_res2.metric("財務淨流", f"${net_finance:,.0f}")
+        col_res3.metric("期末現金預估", f"${est_end_cash:,.0f}", delta_color="normal" if est_end_cash>=0 else "inverse")
+        
+        # 檢查錯誤
+        has_error = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2) > cap)
+        
+        if est_cash < 0:
+            st.error(f"⚠️ 現金不足！預估赤字 ${est_cash:,.0f}，請增加借款。")
+        
+        if st.button("✅ 確認並提交決策", type="primary", use_container_width=True, disabled=has_error):
+            new_dec = {
+                "price":{"P1":p1_p,"P2":p2_p}, "ad":{"P1":p1_ad,"P2":p2_ad},
+                "production":{"P1":pp1,"P2":pp2}, "buy_rm":{"R1":br1,"R2":br2},
+                "rd":{"P1":rd1,"P2":rd2}, "ops":{"buy_lines":bl,"sell_lines":0},
+                "finance":{"loan_add":ln,"loan_pay":py}
+            }
+            if season not in db["decisions"]: db["decisions"][season] = {}
+            db["decisions"][season][who] = new_dec
+            save_db(db)
+            st.toast("決策已保存！", icon="🎉")
+            time.sleep(1)
+            st.rerun()
 
 def main():
     db = load_db()
     st.title(f"🏢 {SYSTEM_NAME}")
-    l, r = st.columns([1,2], gap="large")
+    l, r = st.columns([1, 2], gap="large")
     render_teacher_panel(db, l)
     render_student_area(db, r)
 
