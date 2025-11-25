@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V14.4 (全流程帳目驗算版)
+# Nova BOSS 企業經營模擬系統 V14.5 (最終修復與防呆版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V14.4"
-DB_FILE = "nova_boss_v14_4.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V14.5"
+DB_FILE = "nova_boss_v14_5.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -84,7 +84,7 @@ def init_team_state(team_name):
     }
 
 # ==========================================
-# 4. 結算引擎
+# 4. 結算引擎 (確保所有細節都被記錄)
 # ==========================================
 def run_simulation(db):
     season = db["season"]
@@ -136,18 +136,27 @@ def run_simulation(db):
         sale2 = min(int(PARAMS["base_demand"]["P2"]*share2), st_tm["inventory"]["P2"])
         st_tm["inventory"]["P1"] -= sale1; st_tm["inventory"]["P2"] -= sale2
         
+        # --- 財務明細計算 ---
         rev_p1 = sale1 * d["price"]["P1"]
         rev_p2 = sale2 * d["price"]["P2"]
         rev = rev_p1 + rev_p2
         
-        cost_mat = (d["buy_rm"]["R1"]*100 + d["buy_rm"]["R2"]*150)
-        cost_mfg = (real_prod1*60 + real_prod2*90)
-        cost_ad = (d["ad"]["P1"]+d["ad"]["P2"])
-        cost_rd = (d["rd"]["P1"]+d["rd"]["P2"])
+        cost_mat_r1 = d["buy_rm"]["R1"] * 100
+        cost_mat_r2 = d["buy_rm"]["R2"] * 150
+        cost_mat = cost_mat_r1 + cost_mat_r2
+        
+        cost_mfg_p1 = real_prod1 * 60
+        cost_mfg_p2 = real_prod2 * 90
+        cost_mfg = cost_mfg_p1 + cost_mfg_p2
+        
+        cost_ad = (d["ad"]["P1"] + d["ad"]["P2"])
+        cost_rd = (d["rd"]["P1"] + d["rd"]["P2"])
+        cost_opex = cost_ad + cost_rd
+        
         cost_capex = (d["ops"]["buy_lines"]*500000)
         interest = st_tm["loan"] * 0.02
         
-        total_expense = cost_mat + cost_mfg + cost_ad + cost_rd + cost_capex + interest
+        total_expense = cost_mat + cost_mfg + cost_opex + cost_capex + interest
         
         net_loan = d["finance"]["loan_add"] - d["finance"]["loan_pay"]
         st_tm["cash"] += (rev - total_expense + net_loan)
@@ -169,12 +178,20 @@ def run_simulation(db):
             "NetProfit": net_profit, 
             "EndCash": st_tm["cash"], 
             "Sales": sale1+sale2,
-            "NetLoan": net_loan, # 新增：淨借貸變動
+            "NetLoan": net_loan,
             "Details": {
-                "RevP1": rev_p1, "RevP2": rev_p2,
-                "CostMat": cost_mat, "CostMfg": cost_mfg,
+                # 營收因子
+                "SaleQtyP1": sale1, "PriceP1": d["price"]["P1"], "RevP1": rev_p1,
+                "SaleQtyP2": sale2, "PriceP2": d["price"]["P2"], "RevP2": rev_p2,
+                # 成本因子
+                "BuyQtyR1": d["buy_rm"]["R1"], "CostMatR1": cost_mat_r1,
+                "BuyQtyR2": d["buy_rm"]["R2"], "CostMatR2": cost_mat_r2,
+                "ProdQtyP1": real_prod1, "CostMfgP1": cost_mfg_p1,
+                "ProdQtyP2": real_prod2, "CostMfgP2": cost_mfg_p2,
+                # 費用因子
                 "CostAd": cost_ad, "CostRD": cost_rd,
-                "CostCapex": cost_capex, "Interest": interest
+                "BuyLineQty": d["ops"]["buy_lines"], "CostCapex": cost_capex,
+                "LoanAmt": st_tm["loan"], "Interest": interest
             }
         })
         leaderboard.append({"Team": team, "Revenue": rev, "Profit": net_profit, "Cash": st_tm["cash"]})
@@ -206,9 +223,11 @@ def render_teacher_panel(db, container):
             for t in TEAMS_LIST:
                 is_sub = t in db["decisions"].get(season, {})
                 status_list.append({"組別": t, "狀態": "✅ 已交" if is_sub else "⏳ 未交"})
+            
             st.dataframe(pd.DataFrame(status_list).T, hide_index=True, use_container_width=True)
             
             col_btn1, col_btn2 = st.columns(2)
+            
             if col_btn1.button("🎲 幫沒交的組隨機填 (演示用)"):
                 for t in TEAMS_LIST:
                     if t not in db["decisions"].get(season, {}):
@@ -235,7 +254,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板 (全流程驗算版)
+# 6. 學生面板 (含資料防呆顯示)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -271,15 +290,24 @@ def render_student_area(db, container):
             r1_c2.metric(f"2. S{season-1} 營收", f"+${last_rec['Revenue']:,.0f}")
             r1_c3.metric(f"3. S{season-1} 支出", f"-${last_rec['Expense']:,.0f}")
             
-            # --- 上層展開：營收/支出細項 ---
-            with st.expander("🔍 點此查看：營收與支出明細", expanded=False):
+            # --- 明細展開 (含防呆：若無資料則隱藏) ---
+            with st.expander("🔍 點此查看：詳細帳目算式 (Drill-down)", expanded=False):
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
                     st.success(f"**🟢 營收細項 (+${last_rec['Revenue']:,.0f})**")
+                    # 防呆檢查：如果該 key 不存在 (舊資料)，就給預設值
+                    p1_qty = dt.get('SaleQtyP1', 0)
+                    p1_prc = dt.get('PriceP1', 0)
+                    p2_qty = dt.get('SaleQtyP2', 0)
+                    p2_prc = dt.get('PriceP2', 0)
+                    
                     st.markdown(f"""
-                    * **P1 銷售**: {dt.get('SaleQtyP1',0)}個 × ${dt.get('PriceP1',0)} = **${dt.get('RevP1',0):,.0f}**
-                    * **P2 銷售**: {dt.get('SaleQtyP2',0)}個 × ${dt.get('PriceP2',0)} = **${dt.get('RevP2',0):,.0f}**
+                    * **P1 銷售**: {p1_qty}個 × ${p1_prc} = **${dt.get('RevP1',0):,.0f}**
+                    * **P2 銷售**: {p2_qty}個 × ${p2_prc} = **${dt.get('RevP2',0):,.0f}**
                     """)
+                    if last_rec['Revenue'] > 0 and p1_qty == 0 and p2_qty == 0:
+                        st.caption("⚠️ 提示：若是舊資料版本，可能無法顯示詳細單價與數量，請重置遊戲以獲得最佳體驗。")
+
                 with col_d2:
                     st.error(f"**🔴 支出細項 (-${last_rec['Expense']:,.0f})**")
                     st.markdown(f"""
@@ -295,7 +323,6 @@ def render_student_area(db, container):
             r2_c1.metric(f"4. 淨變動", f"{net_change:+,.0f}", delta="含借貸變動")
             r2_c2.metric(f"5. S{season} 本季期初現金", f"${st_tm['cash']:,.0f}", delta="本季可用資金", delta_color="normal")
 
-            # --- 下層展開：驗算過程 ---
             with st.expander("🔍 點此查看：資金驗算過程", expanded=False):
                 net_loan = last_rec.get('NetLoan', 0)
                 st.info(f"**📊 淨變動驗算 (+${net_change:,.0f})**")
