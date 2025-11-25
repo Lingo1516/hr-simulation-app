@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V15.0 (AI 經營顧問診斷版)
+# Nova BOSS 企業經營模擬系統 V15.1 (戰績排名通知版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V15.0"
-DB_FILE = "nova_boss_v15.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V15.1"
+DB_FILE = "nova_boss_v15_1.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -56,42 +56,24 @@ def analyze_cash(cash):
     if cash < 1000000: return "⚠️ **危險邊緣**。現金剩不到 100 萬。"
     return "🟢 **資金安全**。"
 
-# --- 🔥 新增：AI 經營診斷報告生成器 ---
+# AI 顧問報告生成
 def generate_strategy_report(rec):
-    """根據上一季的數據，生成文字建議"""
     report = []
     dt = rec.get("Details", {})
-    
-    # 1. 銷售與定價診斷
     p1_price = dt.get('PriceP1', 200)
     p1_sales = dt.get('SaleQtyP1', 0)
     if p1_sales < 500:
         if p1_price > 220:
-            report.append("🔴 **P1 滯銷警訊**：您的定價過高 ($" + str(p1_price) + ")，導致市占率流失，建議下季降價促銷。")
+            report.append("🔴 **P1 滯銷**：定價過高 ($" + str(p1_price) + ")，建議降價。")
         else:
-            report.append("🟠 **P1 銷量低**：定價合理但銷量低，可能是因為「沒貨可賣」或是「對手廣告太強」。")
-    elif p1_sales > 2000:
-        report.append("🟢 **P1 熱銷**：您的低價策略奏效！請確認產能是否足以支撐，避免缺貨少賺。")
-
-    # 2. 庫存與缺貨診斷 (簡易判斷：若銷量等於庫存，極可能缺貨)
-    # 這裡無法精確知道缺多少，但可以提示
+            report.append("🟠 **P1 銷量低**：可能是缺貨或對手太強。")
     
-    # 3. 財務與獲利診斷
     net_profit = rec['NetProfit']
     if net_profit < 0:
-        reasons = []
-        if dt.get('Interest', 0) > 50000: reasons.append("利息負擔過重")
-        if dt.get('CostAd', 0) > 500000: reasons.append("廣告費投入過高")
-        if (p1_price - 160) < 10: reasons.append("毛利太低 (殺價過頭)")
-        
-        reason_str = "、".join(reasons) if reasons else "營收無法覆蓋支出"
-        report.append(f"💸 **虧損警報**：本季虧損 ${abs(net_profit):,.0f}。主要原因可能是：{reason_str}。")
-    else:
-        report.append(f"💰 **獲利恭喜**：本季淨賺 ${net_profit:,.0f}！請保持優勢，可考慮擴充產線。")
-
-    # 4. 現金流診斷
+        report.append(f"💸 **虧損警報**：本季虧損 ${abs(net_profit):,.0f}。請檢查毛利與費用。")
+    
     if rec['EndCash'] < 0:
-        report.append("🛑 **資金斷鏈**：期末現金為負，系統已強制借貸。請務必在財務分頁增加貸款，以免利息壓垮公司。")
+        report.append("🛑 **資金斷鏈**：現金為負，已強制借貸，請注意利息壓力。")
 
     return report
 
@@ -175,28 +157,21 @@ def run_simulation(db):
         sale2 = min(int(PARAMS["base_demand"]["P2"]*share2), st_tm["inventory"]["P2"])
         st_tm["inventory"]["P1"] -= sale1; st_tm["inventory"]["P2"] -= sale2
         
+        # 財務明細
         rev_p1 = sale1 * d["price"]["P1"]
         rev_p2 = sale2 * d["price"]["P2"]
         rev = rev_p1 + rev_p2
         
-        cost_mat_r1 = d["buy_rm"]["R1"] * 100
-        cost_mat_r2 = d["buy_rm"]["R2"] * 150
-        cost_mat = cost_mat_r1 + cost_mat_r2
-        
-        cost_mfg_p1 = real_prod1 * 60
-        cost_mfg_p2 = real_prod2 * 90
-        cost_mfg = cost_mfg_p1 + cost_mfg_p2
-        
+        cost_mat = (d["buy_rm"]["R1"]*100 + d["buy_rm"]["R2"]*150)
+        cost_mfg = (real_prod1*60 + real_prod2*90)
         cost_ad = (d["ad"]["P1"] + d["ad"]["P2"])
         cost_rd = (d["rd"]["P1"] + d["rd"]["P2"])
-        cost_opex = cost_ad + cost_rd
-        
         cost_capex = (d["ops"]["buy_lines"]*500000)
         interest = st_tm["loan"] * 0.02
         
-        total_expense = cost_mat + cost_mfg + cost_opex + cost_capex + interest
-        
+        total_expense = cost_mat + cost_mfg + cost_ad + cost_rd + cost_capex + interest
         net_loan = d["finance"]["loan_add"] - d["finance"]["loan_pay"]
+        
         st_tm["cash"] += (rev - total_expense + net_loan)
         st_tm["loan"] += net_loan
         st_tm["capacity_lines"] += d["ops"]["buy_lines"]
@@ -220,17 +195,15 @@ def run_simulation(db):
             "Details": {
                 "SaleQtyP1": sale1, "PriceP1": d["price"]["P1"], "RevP1": rev_p1,
                 "SaleQtyP2": sale2, "PriceP2": d["price"]["P2"], "RevP2": rev_p2,
-                "BuyQtyR1": d["buy_rm"]["R1"], "CostMatR1": cost_mat_r1,
-                "BuyQtyR2": d["buy_rm"]["R2"], "CostMatR2": cost_mat_r2,
-                "ProdQtyP1": real_prod1, "CostMfgP1": cost_mfg_p1,
-                "ProdQtyP2": real_prod2, "CostMfgP2": cost_mfg_p2,
-                "CostAd": cost_ad, "CostRD": cost_rd,
-                "BuyLineQty": d["ops"]["buy_lines"], "CostCapex": cost_capex,
-                "LoanAmt": st_tm["loan"], "Interest": interest
+                "BuyQtyR1": d["buy_rm"]["R1"], "CostMat": cost_mat,
+                "CostMfg": cost_mfg, "CostAd": cost_ad, "CostRD": cost_rd,
+                "CostCapex": cost_capex, "Interest": interest
             }
         })
+        # 排行榜用 NetProfit 排序
         leaderboard.append({"Team": team, "Revenue": rev, "Profit": net_profit, "Cash": st_tm["cash"]})
 
+    # 排序並存檔
     leaderboard.sort(key=lambda x: x["Profit"], reverse=True)
     db["teacher"]["ranking"] = leaderboard
     db["season"] += 1
@@ -287,7 +260,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板 (含診斷報告)
+# 6. 學生面板 (含戰績排名)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -299,19 +272,30 @@ def render_student_area(db, container):
         if who not in db["teams"]: db["teams"][who]=init_team_state(who); save_db(db); st.rerun()
         st_tm = db["teams"][who]
 
-        # --- 🔥 AI 顧問診斷 (核心新功能) ---
-        if st_tm['history']:
-            last_rec = st_tm['history'][-1]
-            advice_list = generate_strategy_report(last_rec)
+        # --- 🔥 戰績排名通知 (新功能) ---
+        if season > 1 and db["teacher"]["ranking"]:
+            # 找出自己的排名
+            my_rank = 999
+            my_profit = 0
+            for idx, row in enumerate(db["teacher"]["ranking"]):
+                if row["Team"] == who:
+                    my_rank = idx + 1
+                    my_profit = row["Profit"]
+                    break
             
-            with st.expander(f"🕵️ **AI 經營顧問：上季 (S{season-1}) 績效診斷與建議**", expanded=True):
-                for advice in advice_list:
-                    st.write(advice)
-                st.caption("請根據以上建議，調整本季決策。")
-        else:
-            st.info("👋 歡迎加入！這是第 1 季，請參考下方規則開始決策。")
-        # --------------------------------
+            # 根據排名給予不同顏色的回饋
+            if my_rank == 1:
+                st.success(f"🏆 **恭喜！上一季你們是第 {my_rank} 名 (獲利王)！** 本季淨利 ${my_profit:,.0f}")
+            elif my_rank <= 3:
+                st.info(f"🥈 **表現優異！上一季排名第 {my_rank} 名！** 本季淨利 ${my_profit:,.0f}")
+            elif my_rank <= 7:
+                st.warning(f"📊 **再接再厲！上一季排名第 {my_rank} 名。** 本季淨利 ${my_profit:,.0f}")
+            else:
+                st.error(f"💪 **請加油！上一季排名第 {my_rank} 名。** 本季淨利 ${my_profit:,.0f}，請檢查策略！")
+        # ------------------------------
 
+        st.info("👇 請依照 **Step 1 -> Step 2 -> Step 3** 的順序完成決策。")
+        
         if db["teacher"]["status"] == "LOCKED":
             st.error("⛔ 老師正在結算中，請稍候..."); return
 
@@ -327,35 +311,24 @@ def render_student_area(db, container):
             dt = last_rec.get("Details", {})
             
             st.markdown("### 💰 資金流向 (上一季結果分解)")
-            
-            # 上層
             r1_c1, r1_c2, r1_c3 = st.columns(3)
             r1_c1.metric(f"1. S{season-1} 期初", f"${last_rec['StartCash']:,.0f}")
             r1_c2.metric(f"2. S{season-1} 營收", f"+${last_rec['Revenue']:,.0f}")
             r1_c3.metric(f"3. S{season-1} 支出", f"-${last_rec['Expense']:,.0f}")
             
-            # 明細展開
             with st.expander("🔍 點此查看：詳細帳目算式 (Drill-down)", expanded=False):
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
                     st.success(f"**🟢 營收細項 (+${last_rec['Revenue']:,.0f})**")
-                    p1_qty = dt.get('SaleQtyP1', 0)
-                    p1_prc = dt.get('PriceP1', 0)
-                    p2_qty = dt.get('SaleQtyP2', 0)
-                    p2_prc = dt.get('PriceP2', 0)
-                    st.markdown(f"""
-                    * **P1 銷售**: {p1_qty}個 × ${p1_prc} = **${dt.get('RevP1',0):,.0f}**
-                    * **P2 銷售**: {p2_qty}個 × ${p2_prc} = **${dt.get('RevP2',0):,.0f}**
-                    """)
+                    st.write(f"* P1 銷售: {dt.get('SaleQtyP1',0)}個 × ${dt.get('PriceP1',0)} = ${dt.get('RevP1',0):,.0f}")
+                    st.write(f"* P2 銷售: {dt.get('SaleQtyP2',0)}個 × ${dt.get('PriceP2',0)} = ${dt.get('RevP2',0):,.0f}")
                 with col_d2:
                     st.error(f"**🔴 支出細項 (-${last_rec['Expense']:,.0f})**")
-                    st.markdown(f"""
-                    * **原料採購**: **${dt.get('CostMat',0):,.0f}**
-                    * **生產加工**: **${dt.get('CostMfg',0):,.0f}**
-                    * **行銷研發**: **${dt.get('CostAd',0)+dt.get('CostRD',0):,.0f}**
-                    * **資本支出**: **${dt.get('CostCapex',0):,.0f}**
-                    * **銀行利息**: **${dt.get('Interest',0):,.0f}**
-                    """)
+                    st.write(f"* 原料: ${dt.get('CostMat',0):,.0f}")
+                    st.write(f"* 加工: ${dt.get('CostMfg',0):,.0f}")
+                    st.write(f"* 行銷RD: ${dt.get('CostAd',0)+dt.get('CostRD',0):,.0f}")
+                    st.write(f"* 擴廠: ${dt.get('CostCapex',0):,.0f}")
+                    st.write(f"* 利息: ${dt.get('Interest',0):,.0f}")
 
             st.write("---") 
             r2_c1, r2_c2 = st.columns([1, 2])
