@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V14.5 (最終修復與防呆版)
+# Nova BOSS 企業經營模擬系統 V15.0 (AI 經營顧問診斷版)
 # Author: Gemini (2025-11-25)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS 經營模擬", layout="wide", page_icon
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V14.5"
-DB_FILE = "nova_boss_v14_5.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V15.0"
+DB_FILE = "nova_boss_v15.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 PARAMS = {
@@ -56,6 +56,45 @@ def analyze_cash(cash):
     if cash < 1000000: return "⚠️ **危險邊緣**。現金剩不到 100 萬。"
     return "🟢 **資金安全**。"
 
+# --- 🔥 新增：AI 經營診斷報告生成器 ---
+def generate_strategy_report(rec):
+    """根據上一季的數據，生成文字建議"""
+    report = []
+    dt = rec.get("Details", {})
+    
+    # 1. 銷售與定價診斷
+    p1_price = dt.get('PriceP1', 200)
+    p1_sales = dt.get('SaleQtyP1', 0)
+    if p1_sales < 500:
+        if p1_price > 220:
+            report.append("🔴 **P1 滯銷警訊**：您的定價過高 ($" + str(p1_price) + ")，導致市占率流失，建議下季降價促銷。")
+        else:
+            report.append("🟠 **P1 銷量低**：定價合理但銷量低，可能是因為「沒貨可賣」或是「對手廣告太強」。")
+    elif p1_sales > 2000:
+        report.append("🟢 **P1 熱銷**：您的低價策略奏效！請確認產能是否足以支撐，避免缺貨少賺。")
+
+    # 2. 庫存與缺貨診斷 (簡易判斷：若銷量等於庫存，極可能缺貨)
+    # 這裡無法精確知道缺多少，但可以提示
+    
+    # 3. 財務與獲利診斷
+    net_profit = rec['NetProfit']
+    if net_profit < 0:
+        reasons = []
+        if dt.get('Interest', 0) > 50000: reasons.append("利息負擔過重")
+        if dt.get('CostAd', 0) > 500000: reasons.append("廣告費投入過高")
+        if (p1_price - 160) < 10: reasons.append("毛利太低 (殺價過頭)")
+        
+        reason_str = "、".join(reasons) if reasons else "營收無法覆蓋支出"
+        report.append(f"💸 **虧損警報**：本季虧損 ${abs(net_profit):,.0f}。主要原因可能是：{reason_str}。")
+    else:
+        report.append(f"💰 **獲利恭喜**：本季淨賺 ${net_profit:,.0f}！請保持優勢，可考慮擴充產線。")
+
+    # 4. 現金流診斷
+    if rec['EndCash'] < 0:
+        report.append("🛑 **資金斷鏈**：期末現金為負，系統已強制借貸。請務必在財務分頁增加貸款，以免利息壓垮公司。")
+
+    return report
+
 # ==========================================
 # 3. 資料庫核心
 # ==========================================
@@ -84,7 +123,7 @@ def init_team_state(team_name):
     }
 
 # ==========================================
-# 4. 結算引擎 (確保所有細節都被記錄)
+# 4. 結算引擎
 # ==========================================
 def run_simulation(db):
     season = db["season"]
@@ -136,7 +175,6 @@ def run_simulation(db):
         sale2 = min(int(PARAMS["base_demand"]["P2"]*share2), st_tm["inventory"]["P2"])
         st_tm["inventory"]["P1"] -= sale1; st_tm["inventory"]["P2"] -= sale2
         
-        # --- 財務明細計算 ---
         rev_p1 = sale1 * d["price"]["P1"]
         rev_p2 = sale2 * d["price"]["P2"]
         rev = rev_p1 + rev_p2
@@ -180,15 +218,12 @@ def run_simulation(db):
             "Sales": sale1+sale2,
             "NetLoan": net_loan,
             "Details": {
-                # 營收因子
                 "SaleQtyP1": sale1, "PriceP1": d["price"]["P1"], "RevP1": rev_p1,
                 "SaleQtyP2": sale2, "PriceP2": d["price"]["P2"], "RevP2": rev_p2,
-                # 成本因子
                 "BuyQtyR1": d["buy_rm"]["R1"], "CostMatR1": cost_mat_r1,
                 "BuyQtyR2": d["buy_rm"]["R2"], "CostMatR2": cost_mat_r2,
                 "ProdQtyP1": real_prod1, "CostMfgP1": cost_mfg_p1,
                 "ProdQtyP2": real_prod2, "CostMfgP2": cost_mfg_p2,
-                # 費用因子
                 "CostAd": cost_ad, "CostRD": cost_rd,
                 "BuyLineQty": d["ops"]["buy_lines"], "CostCapex": cost_capex,
                 "LoanAmt": st_tm["loan"], "Interest": interest
@@ -223,11 +258,9 @@ def render_teacher_panel(db, container):
             for t in TEAMS_LIST:
                 is_sub = t in db["decisions"].get(season, {})
                 status_list.append({"組別": t, "狀態": "✅ 已交" if is_sub else "⏳ 未交"})
-            
             st.dataframe(pd.DataFrame(status_list).T, hide_index=True, use_container_width=True)
             
             col_btn1, col_btn2 = st.columns(2)
-            
             if col_btn1.button("🎲 幫沒交的組隨機填 (演示用)"):
                 for t in TEAMS_LIST:
                     if t not in db["decisions"].get(season, {}):
@@ -254,7 +287,7 @@ def render_teacher_panel(db, container):
                 if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 6. 學生面板 (含資料防呆顯示)
+# 6. 學生面板 (含診斷報告)
 # ==========================================
 def render_student_area(db, container):
     season = db["season"]
@@ -266,8 +299,19 @@ def render_student_area(db, container):
         if who not in db["teams"]: db["teams"][who]=init_team_state(who); save_db(db); st.rerun()
         st_tm = db["teams"][who]
 
-        st.info("👇 請依照 **Step 1 -> Step 2 -> Step 3** 的順序完成決策。")
-        
+        # --- 🔥 AI 顧問診斷 (核心新功能) ---
+        if st_tm['history']:
+            last_rec = st_tm['history'][-1]
+            advice_list = generate_strategy_report(last_rec)
+            
+            with st.expander(f"🕵️ **AI 經營顧問：上季 (S{season-1}) 績效診斷與建議**", expanded=True):
+                for advice in advice_list:
+                    st.write(advice)
+                st.caption("請根據以上建議，調整本季決策。")
+        else:
+            st.info("👋 歡迎加入！這是第 1 季，請參考下方規則開始決策。")
+        # --------------------------------
+
         if db["teacher"]["status"] == "LOCKED":
             st.error("⛔ 老師正在結算中，請稍候..."); return
 
@@ -290,24 +334,19 @@ def render_student_area(db, container):
             r1_c2.metric(f"2. S{season-1} 營收", f"+${last_rec['Revenue']:,.0f}")
             r1_c3.metric(f"3. S{season-1} 支出", f"-${last_rec['Expense']:,.0f}")
             
-            # --- 明細展開 (含防呆：若無資料則隱藏) ---
+            # 明細展開
             with st.expander("🔍 點此查看：詳細帳目算式 (Drill-down)", expanded=False):
                 col_d1, col_d2 = st.columns(2)
                 with col_d1:
                     st.success(f"**🟢 營收細項 (+${last_rec['Revenue']:,.0f})**")
-                    # 防呆檢查：如果該 key 不存在 (舊資料)，就給預設值
                     p1_qty = dt.get('SaleQtyP1', 0)
                     p1_prc = dt.get('PriceP1', 0)
                     p2_qty = dt.get('SaleQtyP2', 0)
                     p2_prc = dt.get('PriceP2', 0)
-                    
                     st.markdown(f"""
                     * **P1 銷售**: {p1_qty}個 × ${p1_prc} = **${dt.get('RevP1',0):,.0f}**
                     * **P2 銷售**: {p2_qty}個 × ${p2_prc} = **${dt.get('RevP2',0):,.0f}**
                     """)
-                    if last_rec['Revenue'] > 0 and p1_qty == 0 and p2_qty == 0:
-                        st.caption("⚠️ 提示：若是舊資料版本，可能無法顯示詳細單價與數量，請重置遊戲以獲得最佳體驗。")
-
                 with col_d2:
                     st.error(f"**🔴 支出細項 (-${last_rec['Expense']:,.0f})**")
                     st.markdown(f"""
@@ -322,14 +361,6 @@ def render_student_area(db, container):
             r2_c1, r2_c2 = st.columns([1, 2])
             r2_c1.metric(f"4. 淨變動", f"{net_change:+,.0f}", delta="含借貸變動")
             r2_c2.metric(f"5. S{season} 本季期初現金", f"${st_tm['cash']:,.0f}", delta="本季可用資金", delta_color="normal")
-
-            with st.expander("🔍 點此查看：資金驗算過程", expanded=False):
-                net_loan = last_rec.get('NetLoan', 0)
-                st.info(f"**📊 淨變動驗算 (+${net_change:,.0f})**")
-                st.write(f"營收 ${last_rec['Revenue']:,.0f} - 支出 ${last_rec['Expense']:,.0f} + 借貸變動 ${net_loan:,.0f} = **${net_change:,.0f}**")
-                
-                st.success(f"**💰 期初現金驗算 (${st_tm['cash']:,.0f})**")
-                st.write(f"上季期初 ${last_rec['StartCash']:,.0f} + 淨變動 ${net_change:,.0f} = **${st_tm['cash']:,.0f}**")
 
         # --- 2. 庫存與負債 ---
         st.markdown("---")
