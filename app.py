@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V18.0 (老師戰情儀表板版)
+# Nova BOSS 企業經營模擬系統 V20.0 (自動刷新與同步引導版)
 # Author: Gemini (2025-11-26)
 
 import streamlit as st
@@ -8,7 +8,6 @@ import os
 import pickle
 import time
 import random
-from datetime import datetime
 
 # ==========================================
 # 0. 頁面設定
@@ -16,13 +15,13 @@ from datetime import datetime
 st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 
 # ==========================================
-# 1. 系統參數 & 帳號設定
+# 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V18.0"
-DB_FILE = "nova_boss_v18.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V20.0"
+DB_FILE = "nova_boss_v20.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
-# 預設密碼表
+# 帳號設定
 USERS = {"admin": "admin"}
 for t in TEAMS_LIST: USERS[t] = "1234"
 
@@ -249,100 +248,95 @@ def render_login_page():
                     else: st.error("密碼錯誤")
 
 # ==========================================
-# 6. 老師面板 (全新儀表板版)
+# 6. 老師面板
 # ==========================================
 def render_teacher_panel(db):
     season = db["season"]
-    
-    # Header & Refresh
-    c_head, c_refresh = st.columns([3, 1])
-    c_head.title(f"👨‍🏫 老師戰情室 (Season {season})")
-    if c_refresh.button("🔄 刷新狀態 (看誰交了)", use_container_width=True):
-        st.rerun()
+    with container:
+        # 側邊欄永遠顯示刷新按鈕
+        with st.sidebar:
+            if st.button("🔄 強制刷新數據", type="primary"): st.rerun()
+            st.write("---")
+            if st.button("登出"): st.session_state.clear(); st.rerun()
 
-    # --- 1. 戰績排行榜 (Leaderboard) ---
-    if season > 1:
-        st.subheader(f"🏆 上一季 (S{season-1}) 戰績排行")
-        if db["teacher"]["ranking"]:
-            df_rank = pd.DataFrame(db["teacher"]["ranking"])
-            df_rank.columns = ["組別", "本季營收", "本季淨利", "手頭現金"]
-            # Highlight 第一名
-            st.dataframe(df_rank.style.highlight_max(axis=0, subset=["本季淨利"], color='lightgreen'), use_container_width=True)
-        else:
-            st.info("尚無戰績資料")
-    
-    st.divider()
+    with container:
+        st.info(f"👨‍🏫 老師戰情室 (S{season})", icon="👨‍🏫")
+        
+        if season > 1:
+            with st.expander(f"🏆 上季 (S{season-1}) 排行榜", expanded=True):
+                df_rank = pd.DataFrame(db["teacher"]["ranking"])
+                if not df_rank.empty:
+                    df_rank.columns = ["組別", "本季營收", "本季淨利", "手頭現金"]
+                    st.dataframe(df_rank, hide_index=True, use_container_width=True)
 
-    # --- 2. 提交監控儀表板 (Submission Monitor) ---
-    st.subheader("🚨 本季提交監控")
-    
-    submitted_teams = db["decisions"].get(season, {}).keys()
-    count = len(submitted_teams)
-    total = len(TEAMS_LIST)
-    
-    # 進度條
-    st.progress(count/total, text=f"目前進度：{count} / {total} 組已提交")
-    
-    # 燈號矩陣 (5個一列)
-    cols = st.columns(5)
-    for i, team in enumerate(TEAMS_LIST):
-        is_sub = team in submitted_teams
-        with cols[i % 5]:
-            if is_sub:
-                st.success(f"{team}\n✅ 已提交")
-            else:
-                st.error(f"{team}\n⏳ 未提交")
-
-    st.divider()
-
-    # --- 3. 控制台 ---
-    st.subheader("⚙️ 遊戲控制")
-    c1, c2, c3 = st.columns(3)
-    
-    with c1:
-        if st.button("🎲 一鍵隨機代打 (演示用)", help="幫所有沒交的組別自動填入隨機決策"):
+        with st.expander("⚙️ 遊戲控制", expanded=True):
+            status_list = []
             for t in TEAMS_LIST:
-                if t not in db["decisions"].get(season, {}):
-                    rand_dec = {
-                        "price":{"P1":random.randint(180,220),"P2":random.randint(330,370)},
-                        "ad":{"P1":50000,"P2":50000},
-                        "production":{"P1":1000,"P2":500},
-                        "buy_rm":{"R1":1000,"R2":500},
-                        "rd":{"P1":0,"P2":0}, "ops":{"buy_lines":0,"sell_lines":0},
-                        "finance":{"loan_add":0,"loan_pay":0}
-                    }
-                    if season not in db["decisions"]: db["decisions"][season] = {}
-                    db["decisions"][season][t] = rand_dec
-            save_db(db); st.success("已幫所有懶惰蟲填好資料！"); time.sleep(1); st.rerun()
+                is_sub = t in db["decisions"].get(season, {})
+                status_list.append({"組別": t, "狀態": "✅ 已交" if is_sub else "⏳ 未交"})
+            st.dataframe(pd.DataFrame(status_list).T, hide_index=True, use_container_width=True)
+            
+            col_btn1, col_btn2 = st.columns(2)
+            if col_btn1.button("🎲 隨機代打 (演示用)"):
+                for t in TEAMS_LIST:
+                    if t not in db["decisions"].get(season, {}):
+                        rand_dec = {
+                            "price":{"P1":random.randint(180,220),"P2":random.randint(330,370)},
+                            "ad":{"P1":50000,"P2":50000},
+                            "production":{"P1":1000,"P2":500},
+                            "buy_rm":{"R1":1000,"R2":500},
+                            "rd":{"P1":0,"P2":0}, "ops":{"buy_lines":0,"sell_lines":0},
+                            "finance":{"loan_add":0,"loan_pay":0}
+                        }
+                        if season not in db["decisions"]: db["decisions"][season] = {}
+                        db["decisions"][season][t] = rand_dec
+                save_db(db); st.success("已自動產生！"); time.sleep(1); st.rerun()
 
-    with c2:
-        # 只有全部交了(或老師硬按)才能結算
-        btn_label = f"🚀 結算本季 ({count}/{total})"
-        if st.button(btn_label, type="primary", disabled=(count == 0)):
-            run_simulation(db)
-            st.balloons()
-            st.success(f"第 {season} 季結算完成！進入下一季。")
-            time.sleep(2); st.rerun()
-
-    with c3:
-        if st.button("🧨 重置所有遊戲數據"):
-            if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
+            if col_btn2.button("🚀 結算本季 (進入下一季)", type="primary"):
+                run_simulation(db)
+                st.balloons()
+                st.success(f"結算完成！目前已進入第 {db['season']} 季。")
+                time.sleep(1); st.rerun()
+            
+            st.divider()
+            if st.button("🧨 重置遊戲"):
+                if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
 # 7. 學生面板
 # ==========================================
 def render_student_area(db, team_name):
     season = db["season"]
-    st_tm = db["teams"].get(team_name, init_team_state(team_name))
     
-    # Sidebar 登出
+    # Sidebar：重要！讓學生可以隨時刷新
     with st.sidebar:
         st.title(f"👤 {team_name}")
-        st.write(f"目前季度：Season {season}")
-        if st.button("登出", type="secondary"):
-            st.session_state.clear(); st.rerun()
+        st.info(f"目前進度：Season {season}")
+        if st.button("🔄 刷新頁面 (檢查進度)", type="primary"): st.rerun()
+        st.write("---")
+        if st.button("登出"): st.session_state.clear(); st.rerun()
 
-    st.title(f"🏭 {team_name} 經營決策 (Season {season})")
+    st.title(f"🏭 {team_name} 決策端 (Season {season})")
+    
+    if team_name not in db["teams"]: db["teams"][team_name]=init_team_state(team_name); save_db(db); st.rerun()
+    st_tm = db["teams"][team_name]
+
+    # --- 狀態檢查 (核心修改) ---
+    is_submitted = team_name in db["decisions"].get(season, {})
+    
+    # 如果已經提交，顯示等待畫面與「同步按鈕」
+    if is_submitted:
+        st.success(f"✅ **{team_name} 本季決策已提交！**")
+        st.info("⏳ 請等待老師結算...")
+        
+        st.markdown("---")
+        st.markdown("### 老師說結算好了嗎？")
+        # 這個按鈕是讓學生手動觸發刷新，進入下一季的關鍵
+        if st.button("🔄 老師說結算好了？點我進入下一季", type="primary", use_container_width=True):
+            st.rerun()
+            
+        st.markdown("---")
+        st.warning("若想修改決策，請直接在下方重新填寫並提交即可 (會覆蓋舊資料)。")
 
     # --- 戰績通知 ---
     if season > 1 and db["teacher"]["ranking"]:
@@ -353,34 +347,24 @@ def render_student_area(db, team_name):
                 my_rank = idx + 1
                 my_profit = row["Profit"]
                 break
-        
-        if my_rank == 1:
-            st.success(f"🏆 **狂賀！上一季你們是第 {my_rank} 名 (獲利王)！** 淨利 ${my_profit:,.0f}")
-        elif my_rank <= 3:
-            st.info(f"🥈 **表現優異！上一季排名第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
-        else:
-            st.warning(f"💪 **再接再厲！上一季排名第 {my_rank} 名。** 淨利 ${my_profit:,.0f}")
+        if my_rank == 1: st.success(f"🏆 **恭喜！上季第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
+        elif my_rank <= 3: st.info(f"🥈 **表現優異！上季第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
+        else: st.warning(f"💪 **再接再厲！上季第 {my_rank} 名。** 淨利 ${my_profit:,.0f}")
 
     # --- AI 顧問 ---
     if st_tm['history']:
-        with st.expander(f"🕵️ **AI 經營顧問診斷 (點擊展開)**", expanded=False):
+        with st.expander(f"🕵️ **AI 經營顧問診斷**", expanded=False):
             for adv in generate_strategy_report(st_tm['history'][-1]): st.write(adv)
 
-    # --- 鎖定狀態檢查 ---
-    is_submitted = team_name in db["decisions"].get(season, {})
-    
     if db["teacher"]["status"] == "LOCKED":
         st.error("⛔ 老師正在結算中，請稍候..."); return
-    
-    if is_submitted:
-        st.success("✅ **本季決策已提交！** 如需修改，請再次點擊下方提交按鈕覆蓋。")
 
     # --- 資金橋 ---
     if not st_tm['history']:
         st.markdown("### 💰 資金流向")
         r1, r2 = st.columns(2)
-        r1.metric("1. 初始資金", "$8,000,000")
-        r2.metric("2. 本季期初現金", "$8,000,000", delta="由此開始")
+        r1.metric("初始資金", "$8,000,000")
+        r2.metric("本季期初現金", "$8,000,000", delta="由此開始")
     else:
         last_rec = st_tm['history'][-1]
         net_change = last_rec['Revenue'] - last_rec['Expense'] + last_rec.get('NetLoan', 0)
@@ -424,13 +408,13 @@ def render_student_area(db, team_name):
     with st.container(border=True):
         mk1, mk2 = st.columns(2)
         with mk1:
-            p1_p = st.number_input("P1 價格 (成本$160)", 100, 500, get_nest("price","P1", 200), key="p1p")
+            p1_p = st.number_input("P1 價格 (成本$160)", 100, 500, get_nest("price","P1", 200), key=f"{team_name}_p1p")
             st.caption(analyze_price_p1(p1_p))
-            p1_ad = st.number_input("P1 廣告", 0, 1000000, get_nest("ad","P1", 50000), step=10000, key="p1ad")
+            p1_ad = st.number_input("P1 廣告", 0, 1000000, get_nest("ad","P1", 50000), step=10000, key=f"{team_name}_p1ad")
         with mk2:
-            p2_p = st.number_input("P2 價格 (成本$240)", 200, 800, get_nest("price","P2", 350), key="p2p")
+            p2_p = st.number_input("P2 價格 (成本$240)", 200, 800, get_nest("price","P2", 350), key=f"{team_name}_p2p")
             st.caption(analyze_price_p2(p2_p))
-            p2_ad = st.number_input("P2 廣告", 0, 1000000, get_nest("ad","P2", 50000), step=10000, key="p2ad")
+            p2_ad = st.number_input("P2 廣告", 0, 1000000, get_nest("ad","P2", 50000), step=10000, key=f"{team_name}_p2ad")
 
     st.subheader("Step 2: 生產與擴充")
     with st.container(border=True):
@@ -438,24 +422,24 @@ def render_student_area(db, team_name):
         st.info(f"💡 本季產能上限：**{cap:,}**")
         pd1, pd2 = st.columns(2)
         with pd1:
-            br1 = st.number_input("買 R1 原料 ($100)", 0, 20000, get_nest("buy_rm","R1",0), key="br1")
+            br1 = st.number_input("買 R1 原料 ($100)", 0, 20000, get_nest("buy_rm","R1",0), key=f"{team_name}_br1")
             avail_r1 = st_tm['inventory']['R1'] + br1
-            pp1 = st.number_input(f"生產 P1 (夠做:{avail_r1})", 0, 20000, get_nest("production","P1",0), key="pp1")
+            pp1 = st.number_input(f"生產 P1 (夠做:{avail_r1})", 0, 20000, get_nest("production","P1",0), key=f"{team_name}_pp1")
             if pp1 > avail_r1: st.error("❌ 原料不足")
         with pd2:
-            br2 = st.number_input("買 R2 原料 ($150)", 0, 20000, get_nest("buy_rm","R2",0), key="br2")
+            br2 = st.number_input("買 R2 原料 ($150)", 0, 20000, get_nest("buy_rm","R2",0), key=f"{team_name}_br2")
             avail_r2 = st_tm['inventory']['R2'] + br2
-            pp2 = st.number_input(f"生產 P2 (夠做:{avail_r2})", 0, 20000, get_nest("production","P2",0), key="pp2")
+            pp2 = st.number_input(f"生產 P2 (夠做:{avail_r2})", 0, 20000, get_nest("production","P2",0), key=f"{team_name}_pp2")
             if pp2 > avail_r2: st.error("❌ 原料不足")
         
         if (pp1+pp2) > cap: st.error("❌ 產能不足")
 
         with st.expander("進階：擴充與研發"):
             ex1, ex2 = st.columns(2)
-            bl = ex1.number_input("買產線 ($50萬)", 0, 5, get_nest("ops","buy_lines",0), key="bl")
+            bl = ex1.number_input("買產線 ($50萬)", 0, 5, get_nest("ops","buy_lines",0), key=f"{team_name}_bl")
             ex1.caption("⚠️ 下季生效")
-            rd1 = ex2.number_input("RD P1", 0, 1000000, get_nest("rd","P1",0), step=50000, key="rd1")
-            rd2 = ex2.number_input("RD P2", 0, 1000000, get_nest("rd","P2",0), step=50000, key="rd2")
+            rd1 = ex2.number_input("RD P1", 0, 1000000, get_nest("rd","P1",0), step=50000, key=f"{team_name}_rd1")
+            rd2 = ex2.number_input("RD P2", 0, 1000000, get_nest("rd","P2",0), step=50000, key=f"{team_name}_rd2")
 
     st.subheader("Step 3: 財務")
     with st.container(border=True):
@@ -466,14 +450,14 @@ def render_student_area(db, team_name):
         if precash < 0: f1.error(f"⚠️ 會破產! 缺 ${abs(precash):,.0f}")
         else: f1.success(f"✅ 安全 (剩 ${precash:,.0f})")
         
-        ln = f2.number_input("借款 (+)", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key="ln")
-        py = f2.number_input("還款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key="py")
+        ln = f2.number_input("借款 (+)", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key=f"{team_name}_ln")
+        py = f2.number_input("還款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key=f"{team_name}_py")
 
     st.divider()
     has_err = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2)>cap)
     
-    # 提交按鈕
-    if st.button("✅ 提交決策", type="primary", use_container_width=True, disabled=has_err):
+    btn_label = "✅ 提交決策" if not is_submitted else "🔄 修改並重新提交"
+    if st.button(btn_label, type="primary", use_container_width=True, disabled=has_err, key=f"{team_name}_sub"):
         new_dec = {
             "price":{"P1":p1_p,"P2":p2_p}, "ad":{"P1":p1_ad,"P2":p2_ad},
             "production":{"P1":pp1,"P2":pp2}, "buy_rm":{"R1":br1,"R2":br2},
@@ -482,15 +466,15 @@ def render_student_area(db, team_name):
         }
         if season not in db["decisions"]: db["decisions"][season] = {}
         db["decisions"][season][team_name] = new_dec
-        save_db(db)
-        st.balloons()
-        st.success("提交成功！請通知老師。")
-        time.sleep(1); st.rerun()
+        save_db(db); st.balloons(); st.success("提交成功！"); time.sleep(1); st.rerun()
 
 # ==========================================
 # 8. 主程式
 # ==========================================
 def main():
+    # container 用來控制 layout
+    container = st.container()
+    
     if "logged_in" not in st.session_state:
         render_login_page()
     else:
@@ -503,7 +487,6 @@ def main():
                 if st.button("登出"): st.session_state.clear(); st.rerun()
             render_teacher_panel(db) 
         else:
-            # 學生端介面
             render_student_area(db, user)
 
 if __name__ == "__main__":
