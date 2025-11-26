@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V20.0 (自動刷新與同步引導版)
+# Nova BOSS 企業經營模擬系統 V19.1 (修復 NameError 版)
 # Author: Gemini (2025-11-26)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V20.0"
-DB_FILE = "nova_boss_v20.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V19.1"
+DB_FILE = "nova_boss_v19_1.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 # 帳號設定
@@ -248,95 +248,65 @@ def render_login_page():
                     else: st.error("密碼錯誤")
 
 # ==========================================
-# 6. 老師面板
+# 6. 老師面板 (修復變數範圍錯誤)
 # ==========================================
 def render_teacher_panel(db):
     season = db["season"]
-    with container:
-        # 側邊欄永遠顯示刷新按鈕
-        with st.sidebar:
-            if st.button("🔄 強制刷新數據", type="primary"): st.rerun()
-            st.write("---")
-            if st.button("登出"): st.session_state.clear(); st.rerun()
+    
+    st.info(f"👨‍🏫 老師控制台 (S{season})", icon="👨‍🏫")
+    
+    if season > 1:
+        with st.expander(f"🏆 上季 (S{season-1}) 排行榜", expanded=True):
+            df_rank = pd.DataFrame(db["teacher"]["ranking"])
+            if not df_rank.empty:
+                df_rank.columns = ["組別", "本季營收", "本季淨利", "手頭現金"]
+                st.dataframe(df_rank, hide_index=True, use_container_width=True)
 
-    with container:
-        st.info(f"👨‍🏫 老師戰情室 (S{season})", icon="👨‍🏫")
+    with st.expander("⚙️ 遊戲控制", expanded=True):
+        status_list = []
+        for t in TEAMS_LIST:
+            is_sub = t in db["decisions"].get(season, {})
+            status_list.append({"組別": t, "狀態": "✅ 已交" if is_sub else "⏳ 未交"})
+        st.dataframe(pd.DataFrame(status_list).T, hide_index=True, use_container_width=True)
         
-        if season > 1:
-            with st.expander(f"🏆 上季 (S{season-1}) 排行榜", expanded=True):
-                df_rank = pd.DataFrame(db["teacher"]["ranking"])
-                if not df_rank.empty:
-                    df_rank.columns = ["組別", "本季營收", "本季淨利", "手頭現金"]
-                    st.dataframe(df_rank, hide_index=True, use_container_width=True)
-
-        with st.expander("⚙️ 遊戲控制", expanded=True):
-            status_list = []
+        col_btn1, col_btn2 = st.columns(2)
+        if col_btn1.button("🎲 隨機代打 (演示用)"):
             for t in TEAMS_LIST:
-                is_sub = t in db["decisions"].get(season, {})
-                status_list.append({"組別": t, "狀態": "✅ 已交" if is_sub else "⏳ 未交"})
-            st.dataframe(pd.DataFrame(status_list).T, hide_index=True, use_container_width=True)
-            
-            col_btn1, col_btn2 = st.columns(2)
-            if col_btn1.button("🎲 隨機代打 (演示用)"):
-                for t in TEAMS_LIST:
-                    if t not in db["decisions"].get(season, {}):
-                        rand_dec = {
-                            "price":{"P1":random.randint(180,220),"P2":random.randint(330,370)},
-                            "ad":{"P1":50000,"P2":50000},
-                            "production":{"P1":1000,"P2":500},
-                            "buy_rm":{"R1":1000,"R2":500},
-                            "rd":{"P1":0,"P2":0}, "ops":{"buy_lines":0,"sell_lines":0},
-                            "finance":{"loan_add":0,"loan_pay":0}
-                        }
-                        if season not in db["decisions"]: db["decisions"][season] = {}
-                        db["decisions"][season][t] = rand_dec
-                save_db(db); st.success("已自動產生！"); time.sleep(1); st.rerun()
+                if t not in db["decisions"].get(season, {}):
+                    rand_dec = {
+                        "price":{"P1":random.randint(180,220),"P2":random.randint(330,370)},
+                        "ad":{"P1":50000,"P2":50000},
+                        "production":{"P1":1000,"P2":500},
+                        "buy_rm":{"R1":1000,"R2":500},
+                        "rd":{"P1":0,"P2":0}, "ops":{"buy_lines":0,"sell_lines":0},
+                        "finance":{"loan_add":0,"loan_pay":0}
+                    }
+                    if season not in db["decisions"]: db["decisions"][season] = {}
+                    db["decisions"][season][t] = rand_dec
+            save_db(db); st.success("已自動產生！"); time.sleep(1); st.rerun()
 
-            if col_btn2.button("🚀 結算本季 (進入下一季)", type="primary"):
-                run_simulation(db)
-                st.balloons()
-                st.success(f"結算完成！目前已進入第 {db['season']} 季。")
-                time.sleep(1); st.rerun()
-            
-            st.divider()
-            if st.button("🧨 重置遊戲"):
-                if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
+        if col_btn2.button("🚀 結算本季", type="primary"):
+            run_simulation(db); st.balloons(); time.sleep(1); st.rerun()
+        
+        st.divider()
+        if st.button("🧨 重置遊戲"):
+            if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 7. 學生面板
+# 7. 學生面板 (修復變數範圍錯誤)
 # ==========================================
 def render_student_area(db, team_name):
     season = db["season"]
     
-    # Sidebar：重要！讓學生可以隨時刷新
+    # Sidebar
     with st.sidebar:
         st.title(f"👤 {team_name}")
-        st.info(f"目前進度：Season {season}")
-        if st.button("🔄 刷新頁面 (檢查進度)", type="primary"): st.rerun()
-        st.write("---")
         if st.button("登出"): st.session_state.clear(); st.rerun()
 
     st.title(f"🏭 {team_name} 決策端 (Season {season})")
     
     if team_name not in db["teams"]: db["teams"][team_name]=init_team_state(team_name); save_db(db); st.rerun()
     st_tm = db["teams"][team_name]
-
-    # --- 狀態檢查 (核心修改) ---
-    is_submitted = team_name in db["decisions"].get(season, {})
-    
-    # 如果已經提交，顯示等待畫面與「同步按鈕」
-    if is_submitted:
-        st.success(f"✅ **{team_name} 本季決策已提交！**")
-        st.info("⏳ 請等待老師結算...")
-        
-        st.markdown("---")
-        st.markdown("### 老師說結算好了嗎？")
-        # 這個按鈕是讓學生手動觸發刷新，進入下一季的關鍵
-        if st.button("🔄 老師說結算好了？點我進入下一季", type="primary", use_container_width=True):
-            st.rerun()
-            
-        st.markdown("---")
-        st.warning("若想修改決策，請直接在下方重新填寫並提交即可 (會覆蓋舊資料)。")
 
     # --- 戰績通知 ---
     if season > 1 and db["teacher"]["ranking"]:
@@ -347,7 +317,7 @@ def render_student_area(db, team_name):
                 my_rank = idx + 1
                 my_profit = row["Profit"]
                 break
-        if my_rank == 1: st.success(f"🏆 **恭喜！上季第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
+        if my_rank == 1: st.success(f"🏆 **恭喜！上季第 {my_rank} 名 (獲利王)！** 淨利 ${my_profit:,.0f}")
         elif my_rank <= 3: st.info(f"🥈 **表現優異！上季第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
         else: st.warning(f"💪 **再接再厲！上季第 {my_rank} 名。** 淨利 ${my_profit:,.0f}")
 
@@ -375,7 +345,7 @@ def render_student_area(db, team_name):
         c2.metric("淨變動", f"{net_change:+,.0f}", delta="點我看細項", help=f"營收 ${last_rec['Revenue']:,.0f} - 支出 ${last_rec['Expense']:,.0f}")
         c3.metric("本季期初", f"${st_tm['cash']:,.0f}", delta="可用資金", delta_color="normal")
         
-        with st.expander("🔍 查看詳細帳目 (算式)", expanded=False):
+        with st.expander("🔍 查看詳細帳目", expanded=False):
             d1, d2 = st.columns(2)
             d1.success(f"**🟢 營收 (+${last_rec['Revenue']:,.0f})**")
             d1.write(f"* P1: {dt.get('SaleQtyP1',0)}個 x ${dt.get('PriceP1',0)} = ${dt.get('RevP1',0):,.0f}")
@@ -472,9 +442,6 @@ def render_student_area(db, team_name):
 # 8. 主程式
 # ==========================================
 def main():
-    # container 用來控制 layout
-    container = st.container()
-    
     if "logged_in" not in st.session_state:
         render_login_page()
     else:
