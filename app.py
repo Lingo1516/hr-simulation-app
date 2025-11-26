@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V16.0 (多人連線登入版)
+# Nova BOSS 企業經營模擬系統 V17.0 (身分分流登入版)
 # Author: Gemini (2025-11-26)
 
 import streamlit as st
@@ -17,11 +17,11 @@ st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 # ==========================================
 # 1. 系統參數 & 帳號設定
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V16.0"
-DB_FILE = "nova_boss_v16.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V17.0"
+DB_FILE = "nova_boss_v17.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
-# 預設密碼表 (老師可在此修改)
+# 預設密碼表
 USERS = {
     "admin": "admin",  # 老師帳號
 }
@@ -213,30 +213,49 @@ def run_simulation(db):
     save_db(db)
 
 # ==========================================
-# 5. 登入頁面
+# 5. 登入頁面 (V17.0 關鍵修改：分流登入)
 # ==========================================
 def render_login_page():
     st.markdown(f"<h1 style='text-align: center;'>🏭 {SYSTEM_NAME}</h1>", unsafe_allow_html=True)
     st.markdown("---")
     
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        with st.form("login_form"):
-            st.header("請登入")
-            user = st.text_input("帳號 (Teacher: admin / Student: 第 1 組)")
-            pw = st.text_input("密碼 (Teacher: admin / Student: 1234)", type="password")
-            submitted = st.form_submit_button("登入", type="primary", use_container_width=True)
-            
-            if submitted:
-                if user in USERS and USERS[user] == pw:
-                    st.session_state["logged_in"] = True
-                    st.session_state["user"] = user
-                    st.session_state["role"] = "teacher" if user == "admin" else "student"
-                    st.success("登入成功！")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error("帳號或密碼錯誤")
+    # 創建兩個分頁：老師與學生
+    tab_teacher, tab_student = st.tabs(["👨‍🏫 老師登入 (Admin)", "🧑‍🎓 學生登入 (Team)"])
+    
+    # --- 老師登入區 ---
+    with tab_teacher:
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            with st.form("teacher_login"):
+                t_user = st.text_input("帳號", value="admin")
+                t_pw = st.text_input("密碼", type="password", placeholder="預設 admin")
+                if st.form_submit_button("老師登入", type="primary", use_container_width=True):
+                    if t_user == "admin" and t_pw == USERS["admin"]:
+                        st.session_state["logged_in"] = True
+                        st.session_state["user"] = "admin"
+                        st.session_state["role"] = "teacher"
+                        st.success("歡迎老師！")
+                        time.sleep(0.5); st.rerun()
+                    else:
+                        st.error("管理員密碼錯誤")
+
+    # --- 學生登入區 ---
+    with tab_student:
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            with st.form("student_login"):
+                # 改成下拉選單，避免學生打錯字
+                s_team = st.selectbox("請選擇你的組別", TEAMS_LIST)
+                s_pw = st.text_input("組別密碼", type="password", placeholder="預設 1234")
+                if st.form_submit_button("學生登入", type="primary", use_container_width=True):
+                    if s_team in USERS and USERS[s_team] == s_pw:
+                        st.session_state["logged_in"] = True
+                        st.session_state["user"] = s_team
+                        st.session_state["role"] = "student"
+                        st.success(f"{s_team} 登入成功！")
+                        time.sleep(0.5); st.rerun()
+                    else:
+                        st.error("密碼錯誤")
 
 # ==========================================
 # 6. 老師面板
@@ -289,7 +308,6 @@ def render_teacher_panel(db, container):
 def render_student_area(db, container, team_name, is_preview=False):
     season = db["season"]
     
-    # 如果是老師預覽，允許切換；如果是學生，鎖定為自己
     target_team = team_name
     if is_preview:
         target_team = st.selectbox("切換操作組別 (上帝視角)", TEAMS_LIST, key="god_mode")
@@ -416,7 +434,7 @@ def render_student_area(db, container, team_name, is_preview=False):
             else: f1.success(f"✅ 安全 (剩 ${precash:,.0f})")
             
             ln = f2.number_input("借款 (+)", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key=f"{target_team}_ln")
-            py = f2.number_input("還款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key=f"{target_team}_py")
+            py = f2.number_input("償還貸款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key=f"{target_team}_py")
 
         st.divider()
         has_err = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2)>cap)
@@ -451,9 +469,9 @@ def main():
         if role == "teacher":
             l, r = st.columns([1, 2], gap="large")
             render_teacher_panel(db, l)
-            render_student_area(db, r, user, is_preview=True) # 老師可預覽
+            render_student_area(db, r, user, is_preview=True) 
         else:
-            render_student_area(db, st.container(), user, is_preview=False) # 學生只能看自己
+            render_student_area(db, st.container(), user, is_preview=False)
 
 if __name__ == "__main__":
     main()
