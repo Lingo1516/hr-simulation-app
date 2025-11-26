@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V17.0 (身分分流登入版)
+# Nova BOSS 企業經營模擬系統 V17.1 (登入介面隱私修正版)
 # Author: Gemini (2025-11-26)
 
 import streamlit as st
@@ -17,17 +17,16 @@ st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 # ==========================================
 # 1. 系統參數 & 帳號設定
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V17.0"
-DB_FILE = "nova_boss_v17.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V17.1"
+DB_FILE = "nova_boss_v17_1.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
-# 預設密碼表
+# 預設密碼表 (後端驗證用)
 USERS = {
     "admin": "admin",  # 老師帳號
 }
-# 幫學生產生預設密碼 (都是 1234)
 for t in TEAMS_LIST:
-    USERS[t] = "1234"
+    USERS[t] = "1234"  # 學生預設密碼
 
 PARAMS = {
     "capacity_per_line": 1000,
@@ -213,22 +212,21 @@ def run_simulation(db):
     save_db(db)
 
 # ==========================================
-# 5. 登入頁面 (V17.0 關鍵修改：分流登入)
+# 5. 登入頁面 (V17.1 隱私修正版)
 # ==========================================
 def render_login_page():
     st.markdown(f"<h1 style='text-align: center;'>🏭 {SYSTEM_NAME}</h1>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # 創建兩個分頁：老師與學生
     tab_teacher, tab_student = st.tabs(["👨‍🏫 老師登入 (Admin)", "🧑‍🎓 學生登入 (Team)"])
     
-    # --- 老師登入區 ---
+    # --- 老師登入 ---
     with tab_teacher:
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.form("teacher_login"):
-                t_user = st.text_input("帳號", value="admin")
-                t_pw = st.text_input("密碼", type="password", placeholder="預設 admin")
+                t_user = st.text_input("帳號") # 移除預設 admin
+                t_pw = st.text_input("密碼", type="password", placeholder="請輸入密碼") # 移除預設提示
                 if st.form_submit_button("老師登入", type="primary", use_container_width=True):
                     if t_user == "admin" and t_pw == USERS["admin"]:
                         st.session_state["logged_in"] = True
@@ -237,16 +235,15 @@ def render_login_page():
                         st.success("歡迎老師！")
                         time.sleep(0.5); st.rerun()
                     else:
-                        st.error("管理員密碼錯誤")
+                        st.error("帳號或密碼錯誤")
 
-    # --- 學生登入區 ---
+    # --- 學生登入 ---
     with tab_student:
         c1, c2, c3 = st.columns([1, 2, 1])
         with c2:
             with st.form("student_login"):
-                # 改成下拉選單，避免學生打錯字
                 s_team = st.selectbox("請選擇你的組別", TEAMS_LIST)
-                s_pw = st.text_input("組別密碼", type="password", placeholder="預設 1234")
+                s_pw = st.text_input("組別密碼", type="password", placeholder="請輸入密碼") # 移除預設提示
                 if st.form_submit_button("學生登入", type="primary", use_container_width=True):
                     if s_team in USERS and USERS[s_team] == s_pw:
                         st.session_state["logged_in"] = True
@@ -434,7 +431,7 @@ def render_student_area(db, container, team_name, is_preview=False):
             else: f1.success(f"✅ 安全 (剩 ${precash:,.0f})")
             
             ln = f2.number_input("借款 (+)", 0, 10000000, get_nest("finance","loan_add",0), step=100000, key=f"{target_team}_ln")
-            py = f2.number_input("償還貸款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key=f"{target_team}_py")
+            py = f2.number_input("還款 (-)", 0, 10000000, get_nest("finance","loan_pay",0), step=100000, key=f"{target_team}_py")
 
         st.divider()
         has_err = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2)>cap)
