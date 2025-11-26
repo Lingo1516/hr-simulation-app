@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V20.0 (最終完美穩定版)
-# Author: Gemini (2025-11-26)
+# Nova BOSS 企業經營模擬系統 V22.0 (雙按鈕優化版)
+# Author: Gemini (2025-11-27)
 
 import streamlit as st
 import pandas as pd
@@ -15,13 +15,13 @@ import random
 st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 
 # ==========================================
-# 1. 系統參數 & 帳號設定
+# 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V20.0"
-DB_FILE = "nova_boss_v20.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V22.0"
+DB_FILE = "nova_boss_v22.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
-# 預設密碼表 (後端驗證用)
+# 帳號設定
 USERS = {"admin": "admin"}
 for t in TEAMS_LIST: USERS[t] = "1234"
 
@@ -252,11 +252,15 @@ def render_login_page():
 # ==========================================
 def render_teacher_panel(db):
     season = db["season"]
-    
-    st.info(f"👨‍🏫 老師控制台 (S{season})", icon="👨‍🏫")
+    with st.sidebar:
+        if st.button("🔄 刷新數據", type="primary"): st.rerun()
+        st.write("---")
+        if st.button("登出"): st.session_state.clear(); st.rerun()
+
+    st.info(f"👨‍🏫 老師戰情室 (S{season})", icon="👨‍🏫")
     
     if season > 1:
-        with st.expander(f"🏆 上季 (S{season-1}) 排行榜", expanded=True):
+        with st.expander(f"🏆 上季 (S{season-1}) 戰績排行榜", expanded=True):
             df_rank = pd.DataFrame(db["teacher"]["ranking"])
             if not df_rank.empty:
                 df_rank.columns = ["組別", "本季營收", "本季淨利", "手頭現金"]
@@ -293,23 +297,24 @@ def render_teacher_panel(db):
             if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 7. 學生面板 (修復 NameError)
+# 7. 學生面板 (雙按鈕版)
 # ==========================================
 def render_student_area(db, team_name):
     season = db["season"]
     
-    # 1. 關鍵修復：在這裡先定義 is_submitted
-    is_submitted = team_name in db["decisions"].get(season, {})
-
-    # Sidebar
     with st.sidebar:
         st.title(f"👤 {team_name}")
+        if st.button("🔄 刷新頁面"): st.rerun()
+        st.write("---")
         if st.button("登出"): st.session_state.clear(); st.rerun()
 
     st.title(f"🏭 {team_name} 決策端 (Season {season})")
     
     if team_name not in db["teams"]: db["teams"][team_name]=init_team_state(team_name); save_db(db); st.rerun()
     st_tm = db["teams"][team_name]
+
+    # 狀態檢查
+    is_submitted = team_name in db["decisions"].get(season, {})
 
     # --- 戰績通知 ---
     if season > 1 and db["teacher"]["ranking"]:
@@ -324,6 +329,15 @@ def render_student_area(db, team_name):
         elif my_rank <= 3: st.info(f"🥈 **表現優異！上季第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
         else: st.warning(f"💪 **再接再厲！上季第 {my_rank} 名。** 淨利 ${my_profit:,.0f}")
 
+        # 排行榜表格
+        st.markdown(f"**🏆 上季 (S{season-1}) 市場戰報**")
+        df_rank = pd.DataFrame(db["teacher"]["ranking"])
+        df_student_view = df_rank[["Team", "Profit"]].copy()
+        df_student_view.columns = ["組別", "本季淨利"]
+        df_student_view.index = range(1, len(df_student_view) + 1)
+        st.dataframe(df_student_view, use_container_width=True)
+        st.divider()
+
     # --- AI 顧問 ---
     if st_tm['history']:
         with st.expander(f"🕵️ **AI 經營顧問診斷**", expanded=False):
@@ -336,8 +350,8 @@ def render_student_area(db, team_name):
     if not st_tm['history']:
         st.markdown("### 💰 資金流向")
         r1, r2 = st.columns(2)
-        r1.metric("初始資金", "$8,000,000")
-        r2.metric("本季期初現金", "$8,000,000", delta="由此開始")
+        r1.metric("1. 初始資金", "$8,000,000")
+        r2.metric("2. 本季期初現金", "$8,000,000", delta="由此開始")
     else:
         last_rec = st_tm['history'][-1]
         net_change = last_rec['Revenue'] - last_rec['Expense'] + last_rec.get('NetLoan', 0)
@@ -367,13 +381,15 @@ def render_student_area(db, team_name):
         o2.metric("R2原料", f"{st_tm['inventory']['R2']}")
         o3.metric("P1成品", f"{st_tm['inventory']['P1']}")
         o4.metric("P2成品", f"{st_tm['inventory']['P2']}")
-        o5.metric("產線", f"{st_tm['capacity_lines']}條")
+        o5.metric("產線", f"{st_tm['capacity_lines']}")
     with i2:
         st.markdown("###### 🏦 負債")
         st.metric("貸款總額", f"${st_tm['loan']:,.0f}", delta=f"利息 -${st_tm['loan']*0.02:,.0f}/季", delta_color="inverse")
 
     # --- 決策輸入 ---
     st.markdown("### 📝 決策輸入")
+    st.info("👇 請依照 **Step 1 -> Step 2 -> Step 3** 的順序完成決策。")
+    
     old_dec = db["decisions"].get(season, {}).get(team_name, {})
     def get_nest(k1, k2, d): return old_dec.get(k1, {}).get(k2, d) if isinstance(old_dec, dict) else d
 
@@ -429,8 +445,12 @@ def render_student_area(db, team_name):
     st.divider()
     has_err = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2)>cap)
     
-    btn_label = "✅ 提交決策" if not is_submitted else "🔄 修改並重新提交"
-    if st.button(btn_label, type="primary", use_container_width=True, disabled=has_err, key=f"{team_name}_sub"):
+    # --- 🔥 雙按鈕邏輯 (核心修改) ---
+    col_submit, col_next = st.columns(2)
+    
+    # 按鈕 1: 提交/修改
+    label_sub = "✏️ 修改並重新提交" if is_submitted else "✅ 提交決策"
+    if col_submit.button(label_sub, type="secondary", use_container_width=True, disabled=has_err, key=f"{team_name}_sub"):
         new_dec = {
             "price":{"P1":p1_p,"P2":p2_p}, "ad":{"P1":p1_ad,"P2":p2_ad},
             "production":{"P1":pp1,"P2":pp2}, "buy_rm":{"R1":br1,"R2":br2},
@@ -441,10 +461,18 @@ def render_student_area(db, team_name):
         db["decisions"][season][team_name] = new_dec
         save_db(db); st.balloons(); st.success("提交成功！"); time.sleep(1); st.rerun()
 
+    # 按鈕 2: 進入下一季
+    if is_submitted:
+        if col_next.button("🚀 進入下一季 (刷新)", type="primary", use_container_width=True):
+            st.rerun() # 只要重整，如果老師結算了，season 就會變，畫面自然跳轉
+
 # ==========================================
 # 8. 主程式
 # ==========================================
 def main():
+    # container 用來控制 layout
+    container = st.container()
+    
     if "logged_in" not in st.session_state:
         render_login_page()
     else:
@@ -453,8 +481,6 @@ def main():
         user = st.session_state["user"]
         
         if role == "teacher":
-            with st.sidebar:
-                if st.button("登出"): st.session_state.clear(); st.rerun()
             render_teacher_panel(db) 
         else:
             render_student_area(db, user)
