@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V19.1 (修復 NameError 版)
+# Nova BOSS 企業經營模擬系統 V20.0 (最終完美穩定版)
 # Author: Gemini (2025-11-26)
 
 import streamlit as st
@@ -15,13 +15,13 @@ import random
 st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 
 # ==========================================
-# 1. 系統參數
+# 1. 系統參數 & 帳號設定
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V19.1"
-DB_FILE = "nova_boss_v19_1.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V20.0"
+DB_FILE = "nova_boss_v20.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
-# 帳號設定
+# 預設密碼表 (後端驗證用)
 USERS = {"admin": "admin"}
 for t in TEAMS_LIST: USERS[t] = "1234"
 
@@ -248,7 +248,7 @@ def render_login_page():
                     else: st.error("密碼錯誤")
 
 # ==========================================
-# 6. 老師面板 (修復變數範圍錯誤)
+# 6. 老師面板
 # ==========================================
 def render_teacher_panel(db):
     season = db["season"]
@@ -293,11 +293,14 @@ def render_teacher_panel(db):
             if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 7. 學生面板 (修復變數範圍錯誤)
+# 7. 學生面板 (修復 NameError)
 # ==========================================
 def render_student_area(db, team_name):
     season = db["season"]
     
+    # 1. 關鍵修復：在這裡先定義 is_submitted
+    is_submitted = team_name in db["decisions"].get(season, {})
+
     # Sidebar
     with st.sidebar:
         st.title(f"👤 {team_name}")
@@ -345,7 +348,7 @@ def render_student_area(db, team_name):
         c2.metric("淨變動", f"{net_change:+,.0f}", delta="點我看細項", help=f"營收 ${last_rec['Revenue']:,.0f} - 支出 ${last_rec['Expense']:,.0f}")
         c3.metric("本季期初", f"${st_tm['cash']:,.0f}", delta="可用資金", delta_color="normal")
         
-        with st.expander("🔍 查看詳細帳目", expanded=False):
+        with st.expander("🔍 查看詳細帳目 (算式)", expanded=False):
             d1, d2 = st.columns(2)
             d1.success(f"**🟢 營收 (+${last_rec['Revenue']:,.0f})**")
             d1.write(f"* P1: {dt.get('SaleQtyP1',0)}個 x ${dt.get('PriceP1',0)} = ${dt.get('RevP1',0):,.0f}")
@@ -364,7 +367,7 @@ def render_student_area(db, team_name):
         o2.metric("R2原料", f"{st_tm['inventory']['R2']}")
         o3.metric("P1成品", f"{st_tm['inventory']['P1']}")
         o4.metric("P2成品", f"{st_tm['inventory']['P2']}")
-        o5.metric("產線", f"{st_tm['capacity_lines']}")
+        o5.metric("產線", f"{st_tm['capacity_lines']}條")
     with i2:
         st.markdown("###### 🏦 負債")
         st.metric("貸款總額", f"${st_tm['loan']:,.0f}", delta=f"利息 -${st_tm['loan']*0.02:,.0f}/季", delta_color="inverse")
