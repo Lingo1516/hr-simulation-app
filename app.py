@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V28.0 (集大成最終完美版)
+# Nova BOSS 企業經營模擬系統 V29.0 (全季度歷史數據版)
 # Author: Gemini (2025-11-27)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V28.0"
-DB_FILE = "nova_boss_v28.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V29.0"
+DB_FILE = "nova_boss_v29.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 # 帳號設定
@@ -60,12 +60,10 @@ def analyze_cash(cash):
     if cash < 1000000: return "⚠️ **危險邊緣**。現金剩不到 100 萬。"
     return "🟢 **資金安全**。"
 
-# --- AI 深度診斷報告 ---
 def generate_strategy_report(rec):
     report = []
     dt = rec.get("Details", {})
     
-    # 1. 銷售分析
     p1_demand = dt.get('DemandP1', 0)
     p1_stock = dt.get('StockP1', 0)
     p1_sales = dt.get('SaleQtyP1', 0)
@@ -81,7 +79,6 @@ def generate_strategy_report(rec):
         over = p1_stock - p1_demand
         report.append(f"🔵 **P1 庫存積壓**：因{reason}，剩餘 {over} 個滯銷。建議降價或打廣告。")
     
-    # 2. 未來預測
     capex = dt.get('CostCapex', 0)
     if capex > 0:
         report.append(f"🏭 **擴產預告**：本季擴充產線，下季總產能將增加 **{int(capex/500)}** 單位。")
@@ -90,7 +87,6 @@ def generate_strategy_report(rec):
     if cost_rd > 0:
         report.append(f"🚀 **研發預告**：本季投入研發，下季訂單預計提升。")
 
-    # 3. 盈餘算式
     revenue = rec['Revenue']
     expense = rec['Expense']
     net_profit = rec['NetProfit']
@@ -289,25 +285,61 @@ def render_login_page():
                     else: st.error("密碼錯誤")
 
 # ==========================================
-# 6. 老師面板
+# 6. 老師面板 (歷史數據升級版)
 # ==========================================
 def render_teacher_panel(db):
     season = db["season"]
+    
+    # 整理全季度歷史資料
+    history_records = []
+    for team, data in db["teams"].items():
+        for rec in data["history"]:
+            history_records.append({
+                "組別": team,
+                "季度": f"S{rec['Season']}",
+                "淨利": rec['NetProfit'],
+                "營收": rec['Revenue'],
+                "手頭現金": rec['EndCash']
+            })
+    df_history = pd.DataFrame(history_records)
+
     with st.sidebar:
         if st.button("🔄 刷新數據", type="primary"): st.rerun()
         st.write("---")
         if st.button("登出"): st.session_state.clear(); st.rerun()
 
-    st.info(f"👨‍🏫 老師戰情室 (S{season})", icon="👨‍🏫")
+    st.info(f"👨‍🏫 老師戰情室 (目前進度：S{season})", icon="👨‍🏫")
     
-    if season > 1:
-        with st.expander(f"🏆 上季 (S{season-1}) 戰績排行榜", expanded=True):
-            df_rank = pd.DataFrame(db["teacher"]["ranking"])
-            if not df_rank.empty:
-                df_rank.columns = ["組別", "本季營收", "本季淨利", "手頭現金"]
-                st.dataframe(df_rank, hide_index=True, use_container_width=True)
+    # --- 新增：歷史數據分析中心 ---
+    if not df_history.empty:
+        with st.expander("📊 歷史數據分析中心 (點擊展開)", expanded=True):
+            tab_chart, tab_data = st.tabs(["📈 獲利趨勢圖", "📋 全季度詳細報表"])
+            
+            with tab_chart:
+                # 製作趨勢圖：X軸季度，Y軸淨利，顏色區分組別
+                chart_data = df_history.pivot(index="季度", columns="組別", values="淨利")
+                st.line_chart(chart_data)
+                st.caption("💡 透過折線圖，您可以清楚看出哪些組別正在成長，哪些組別正在衰退。")
 
-    with st.expander("⚙️ 遊戲控制", expanded=True):
+            with tab_data:
+                # 顯示詳細表格
+                st.dataframe(
+                    df_history.sort_values(by=["季度", "淨利"], ascending=[True, False]),
+                    use_container_width=True,
+                    column_config={
+                        "淨利": st.column_config.NumberColumn(format="$%d"),
+                        "營收": st.column_config.NumberColumn(format="$%d"),
+                        "手頭現金": st.column_config.NumberColumn(format="$%d"),
+                    }
+                )
+    else:
+        st.info("ℹ️ 目前尚無歷史數據，請先進行第 1 季結算。")
+    
+    st.divider()
+
+    # --- 遊戲控制區 ---
+    with st.expander("⚙️ 遊戲控制與狀態", expanded=True):
+        # 提交狀態矩陣
         status_list = []
         for t in TEAMS_LIST:
             is_sub = t in db["decisions"].get(season, {})
@@ -315,7 +347,7 @@ def render_teacher_panel(db):
         st.dataframe(pd.DataFrame(status_list).T, hide_index=True, use_container_width=True)
         
         col_btn1, col_btn2 = st.columns(2)
-        if col_btn1.button("🎲 隨機代打 (演示用)"):
+        if col_btn1.button("🎲 隨機代打 (演示用)", help="幫未交的組別填入隨機數據"):
             for t in TEAMS_LIST:
                 if t not in db["decisions"].get(season, {}):
                     rand_dec = {
@@ -334,7 +366,7 @@ def render_teacher_panel(db):
             run_simulation(db); st.balloons(); time.sleep(1); st.rerun()
         
         st.divider()
-        if st.button("🧨 重置遊戲"):
+        if st.button("🧨 重置所有遊戲"):
             if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
@@ -358,30 +390,34 @@ def render_student_area(db, team_name):
 
     # --- 戰績通知 ---
     if season > 1 and db["teacher"]["ranking"]:
-        my_rank = 999
-        my_profit = 0
-        for idx, row in enumerate(db["teacher"]["ranking"]):
-            if row["Team"] == team_name:
-                my_rank = idx + 1
-                my_profit = row["Profit"]
-                break
-        if my_rank == 1: st.success(f"🏆 **恭喜！上季第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
-        elif my_rank <= 3: st.info(f"🥈 **表現優異！上季第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
-        else: st.warning(f"💪 **再接再厲！上季第 {my_rank} 名。** 淨利 ${my_profit:,.0f}")
+        st.markdown(f"### 🏆 上季 (S{season-1}) 市場戰報")
+        df_rank = pd.DataFrame(db["teacher"]["ranking"])
+        df_stu_view = df_rank[["Team", "Profit"]].copy()
+        df_stu_view.columns = ["組別", "本季淨利"]
+        df_stu_view.index = range(1, len(df_stu_view) + 1)
+        
+        my_rank = df_rank[df_rank['Team'] == team_name].index[0] + 1
+        my_profit = df_rank[df_rank['Team'] == team_name]['Profit'].values[0]
 
-        with st.expander("🏆 點此查看戰績排行榜", expanded=True):
-            df_rank = pd.DataFrame(db["teacher"]["ranking"])
-            df_stu_view = df_rank[["Team", "Profit"]].copy()
-            df_stu_view.columns = ["組別", "本季淨利"]
-            df_stu_view.index = range(1, len(df_stu_view)+1)
+        if my_rank == 1: st.success(f"🎉 **恭喜！你們是第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
+        else: st.info(f"📊 **你們排名第 {my_rank} 名** (淨利 ${my_profit:,.0f})")
+
+        with st.expander("點此查看完整排行榜", expanded=True):
             st.dataframe(df_stu_view, use_container_width=True)
         st.divider()
 
     # --- AI 顧問 ---
     if st_tm['history']:
-        with st.expander(f"🕵️ **AI 經營顧問診斷 (含盈餘計算)**", expanded=True):
+        with st.expander(f"🕵️ **AI 經營顧問深度診斷 & 盈餘解析**", expanded=True):
             for adv in generate_strategy_report(st_tm['history'][-1]): st.write(adv)
 
+    if is_submitted:
+        st.success(f"✅ **{team_name} 本季決策已提交！**")
+        st.info("⏳ 請等待老師結算...")
+        st.markdown("---")
+        col_re, col_mod = st.columns(2)
+        if col_re.button("🔄 老師說結算好了？點我進入下一季", type="primary", use_container_width=True): st.rerun()
+        
     if db["teacher"]["status"] == "LOCKED":
         st.error("⛔ 老師正在結算中，請稍候..."); return
 
@@ -404,14 +440,14 @@ def render_student_area(db, team_name):
         with st.expander("🔍 查看詳細帳目 (算式)", expanded=False):
             d1, d2 = st.columns(2)
             with d1:
-                st.success(f"**🟢 營收細項 (+${last_rec['Revenue']:,.0f})**")
+                st.success(f"**🟢 營收 (+${last_rec['Revenue']:,.0f})**")
                 p1_sales = dt.get('SaleQtyP1',0)
                 st.write(f"* P1: {p1_sales}個 x ${dt.get('PriceP1',0)} = ${dt.get('RevP1',0):,.0f}")
                 p2_sales = dt.get('SaleQtyP2',0)
                 st.write(f"* P2: {p2_sales}個 x ${dt.get('PriceP2',0)} = ${dt.get('RevP2',0):,.0f}")
 
             with d2:
-                st.error(f"**🔴 支出細項 (-${last_rec['Expense']:,.0f})**")
+                st.error(f"**🔴 支出 (-${last_rec['Expense']:,.0f})**")
                 st.write(f"* 原料: ${dt.get('CostMat',0):,.0f} | 加工: ${dt.get('CostMfg',0):,.0f}")
                 st.write(f"* 費用: ${dt.get('CostAd',0)+dt.get('CostRD',0):,.0f} | 利息: ${dt.get('Interest',0):,.0f}")
 
@@ -487,13 +523,11 @@ def render_student_area(db, team_name):
     st.divider()
     has_err = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2)>cap)
     
-    # --- 🔥 按鈕修復區 (Core Fix) ---
+    # 按鈕區
     col_sub, col_next = st.columns(2)
+    btn_label = f"✏️ 修改第 {season} 季決策" if is_submitted else f"✅ 提交第 {season} 季決策"
     
-    # 1. 提交按鈕 (清楚標示第幾季)
-    btn_text = f"✏️ 修改第 {season} 季決策" if is_submitted else f"✅ 提交第 {season} 季決策"
-    
-    if col_sub.button(btn_text, type="secondary" if is_submitted else "primary", use_container_width=True, disabled=has_err, key=f"{team_name}_sub"):
+    if col_sub.button(btn_label, type="secondary" if is_submitted else "primary", use_container_width=True, disabled=has_err, key=f"{team_name}_sub"):
         new_dec = {
             "price":{"P1":p1_p,"P2":p2_p}, "ad":{"P1":p1_ad,"P2":p2_ad},
             "production":{"P1":pp1,"P2":pp2}, "buy_rm":{"R1":br1,"R2":br2},
@@ -504,7 +538,6 @@ def render_student_area(db, team_name):
         db["decisions"][season][team_name] = new_dec
         save_db(db); st.balloons(); st.success("提交成功！"); time.sleep(1); st.rerun()
     
-    # 2. 下一季按鈕 (提交後才出現)
     if is_submitted:
         if col_next.button("🚀 老師說結算好了？點此進入下一季", type="primary", use_container_width=True):
             st.rerun()
