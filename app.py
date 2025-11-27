@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Nova BOSS 企業經營模擬系統 V24.0 (因果關係解密版)
+# Nova BOSS 企業經營模擬系統 V25.0 (按鈕標示優化版)
 # Author: Gemini (2025-11-27)
 
 import streamlit as st
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Nova BOSS", layout="wide", page_icon="🏭")
 # ==========================================
 # 1. 系統參數
 # ==========================================
-SYSTEM_NAME = "Nova BOSS 企業經營模擬 V24.0"
-DB_FILE = "nova_boss_v24.pkl"
+SYSTEM_NAME = "Nova BOSS 企業經營模擬 V25.0"
+DB_FILE = "nova_boss_v25.pkl"
 TEAMS_LIST = [f"第 {i} 組" for i in range(1, 11)]
 
 # 帳號設定
@@ -36,7 +36,7 @@ PARAMS = {
 }
 
 # ==========================================
-# 2. 輔助函式 (AI 邏輯升級)
+# 2. 輔助函式
 # ==========================================
 def analyze_price_p1(price):
     cost = 160 
@@ -60,50 +60,36 @@ def analyze_cash(cash):
     if cash < 1000000: return "⚠️ **危險邊緣**。現金剩不到 100 萬。"
     return "🟢 **資金安全**。"
 
-# 🔥 核心升級：因果關係解釋器
 def generate_strategy_report(rec):
     report = []
     dt = rec.get("Details", {})
     
-    # P1 分析
-    p1_price = dt.get('PriceP1', 200)
     p1_demand = dt.get('DemandP1', 0)
     p1_stock = dt.get('StockP1', 0)
     p1_sales = dt.get('SaleQtyP1', 0)
-    
-    # 判斷訂單量原因
-    if p1_demand > 2000: demand_reason = "定價極具吸引力"
-    elif p1_demand > 1000: demand_reason = "定價合理"
-    else: demand_reason = "定價過高導致客源流失"
+    p1_price = dt.get('PriceP1', 0)
+
+    if p1_demand > 2000: reason = "定價極具吸引力"
+    elif p1_demand > 1000: reason = "定價合理"
+    else: reason = "定價過高"
 
     if p1_demand > p1_stock:
-        # 缺貨劇本
-        lost_sales = p1_demand - p1_stock
-        lost_rev = lost_sales * p1_price
-        report.append(f"""
-        🔴 **P1 嚴重缺貨 (有單沒貨)**：
-        * **為什麼有 {p1_demand} 人想買？** 因為您的{demand_reason}。
-        * **為什麼只賣 {p1_sales} 個？** 因為倉庫只有 {p1_stock} 個貨，賣光了。
-        * **後果**：白白損失了 **${lost_rev:,.0f}** 的營收！建議下季 **增加產能** 或 **稍微漲價** 以平衡供需。
-        """)
+        lost = (p1_demand - p1_stock) * p1_price
+        report.append(f"🔴 **P1 嚴重缺貨**：因{reason}吸引 {p1_demand} 人，但庫存僅 {p1_stock}。損失營收 **${lost:,.0f}**！")
     elif p1_stock > p1_demand:
-        # 滯銷劇本
-        over_stock = p1_stock - p1_demand
-        report.append(f"""
-        🔵 **P1 庫存積壓 (有貨沒單)**：
-        * **為什麼只賣 {p1_sales} 個？** 因為{demand_reason}，市場只有 {p1_demand} 人想買。
-        * **後果**：倉庫還剩 **{over_stock}** 個賣不掉，積壓資金。建議下季 **降價促銷** 或 **增加廣告**。
-        """)
+        over = p1_stock - p1_demand
+        report.append(f"🔵 **P1 庫存積壓**：因{reason}導致買氣不足，剩餘 {over} 個滯銷。建議降價或打廣告。")
     
-    # P2 分析 (簡化版邏輯同上)
     p2_demand = dt.get('DemandP2', 0)
     p2_stock = dt.get('StockP2', 0)
     if p2_demand > p2_stock:
-        report.append(f"🔴 **P2 缺貨警報**：市場需求 {p2_demand} > 庫存 {p2_stock}。高端客戶想買卻買不到，請擴充產能。")
+        report.append(f"🔴 **P2 缺貨警報**：高端市場需求 {p2_demand} > 庫存 {p2_stock}，請擴充產能。")
     
-    # 財務分析
     if rec['NetProfit'] < 0:
-        report.append(f"💸 **虧損警報**：本季淨虧損 ${abs(rec['NetProfit']):,.0f}。請檢查是否廣告費過高或毛利太低。")
+        report.append(f"💸 **虧損警報**：本季淨虧損 ${abs(rec['NetProfit']):,.0f}。")
+    
+    if rec['EndCash'] < 0:
+        report.append("🛑 **資金斷鏈**：現金為負，已強制借貸。")
     
     return report
 
@@ -142,7 +128,6 @@ def run_simulation(db):
     decs = db["decisions"].get(season, {})
     leaderboard = []
 
-    # 補齊機器人
     for t in TEAMS_LIST:
         if t not in decs:
             decs[t] = {
@@ -181,7 +166,7 @@ def run_simulation(db):
         st_tm["inventory"]["R1"] -= real_prod1; st_tm["inventory"]["R2"] -= real_prod2
         st_tm["inventory"]["P1"] += real_prod1; st_tm["inventory"]["P2"] += real_prod2
         
-        # --- 關鍵修改：記錄銷售前的「可售庫存」 (Available Stock) ---
+        # Stock Snapshot
         stock_p1 = st_tm["inventory"]["P1"]
         stock_p2 = st_tm["inventory"]["P2"]
 
@@ -337,7 +322,7 @@ def render_teacher_panel(db):
             if os.path.exists(DB_FILE): os.remove(DB_FILE); st.rerun()
 
 # ==========================================
-# 7. 學生面板 (戰績置頂 + AI因果解釋)
+# 7. 學生面板
 # ==========================================
 def render_student_area(db, team_name):
     season = db["season"]
@@ -353,44 +338,30 @@ def render_student_area(db, team_name):
     if team_name not in db["teams"]: db["teams"][team_name]=init_team_state(team_name); save_db(db); st.rerun()
     st_tm = db["teams"][team_name]
 
-    # --- 🔥 1. 戰績排行榜 (強制置頂顯示) ---
+    is_submitted = team_name in db["decisions"].get(season, {})
+
+    # --- 戰績通知 ---
     if season > 1 and db["teacher"]["ranking"]:
         st.markdown(f"### 🏆 上季 (S{season-1}) 市場戰報")
-        
-        # 準備排行榜資料
         df_rank = pd.DataFrame(db["teacher"]["ranking"])
         df_student_view = df_rank[["Team", "Profit"]].copy()
         df_student_view.columns = ["組別", "本季淨利"]
         df_student_view.index = range(1, len(df_student_view) + 1)
         
-        # 找出自己的排名
         my_rank = df_rank[df_rank['Team'] == team_name].index[0] + 1
         my_profit = df_rank[df_rank['Team'] == team_name]['Profit'].values[0]
 
-        # 顯示自己的成績
-        if my_rank == 1:
-            st.success(f"🎉 **恭喜！你們是第 {my_rank} 名 (獲利王)！** 本季淨賺 ${my_profit:,.0f}")
-        else:
-            st.info(f"📊 **你們排名第 {my_rank} 名** (本季淨賺 ${my_profit:,.0f})")
+        if my_rank == 1: st.success(f"🎉 **恭喜！你們是第 {my_rank} 名！** 淨利 ${my_profit:,.0f}")
+        else: st.info(f"📊 **你們排名第 {my_rank} 名** (淨利 ${my_profit:,.0f})")
 
-        # 顯示完整表格
         with st.expander("點此查看完整排行榜", expanded=True):
             st.dataframe(df_student_view, use_container_width=True)
         st.divider()
 
-    # --- 🔥 2. AI 顧問診斷 (因果分析) ---
+    # --- AI 顧問 ---
     if st_tm['history']:
         with st.expander(f"🕵️ **AI 經營顧問診斷 (點擊展開)**", expanded=True):
             for adv in generate_strategy_report(st_tm['history'][-1]): st.write(adv)
-
-    # --- 狀態檢查 ---
-    is_submitted = team_name in db["decisions"].get(season, {})
-    if is_submitted:
-        st.success(f"✅ **{team_name} 本季決策已提交！**")
-        st.info("⏳ 請等待老師結算...")
-        st.markdown("---")
-        if st.button("🔄 老師說結算好了？點我進入下一季", type="primary", use_container_width=True): st.rerun()
-        st.markdown("---")
 
     if db["teacher"]["status"] == "LOCKED":
         st.error("⛔ 老師正在結算中，請稍候..."); return
@@ -399,8 +370,8 @@ def render_student_area(db, team_name):
     if not st_tm['history']:
         st.markdown("### 💰 資金流向")
         r1, r2 = st.columns(2)
-        r1.metric("1. 初始資金", "$8,000,000")
-        r2.metric("2. 本季期初現金", "$8,000,000", delta="由此開始")
+        r1.metric("初始資金", "$8,000,000")
+        r2.metric("本季期初現金", "$8,000,000", delta="由此開始")
     else:
         last_rec = st_tm['history'][-1]
         net_change = last_rec['Revenue'] - last_rec['Expense'] + last_rec.get('NetLoan', 0)
@@ -408,17 +379,32 @@ def render_student_area(db, team_name):
         st.markdown("### 💰 資金流向")
         c1, c2, c3 = st.columns(3)
         c1.metric("上季期初", f"${last_rec['StartCash']:,.0f}")
-        c2.metric("淨變動", f"{net_change:+,.0f}", delta="點我看細項", help=f"營收 ${last_rec['Revenue']:,.0f} - 支出 ${last_rec['Expense']:,.0f}")
+        c2.metric("淨變動", f"{net_change:+,.0f}", delta="點我看細項")
         c3.metric("本季期初", f"${st_tm['cash']:,.0f}", delta="可用資金", delta_color="normal")
         
         with st.expander("🔍 查看詳細帳目 (算式)", expanded=False):
             d1, d2 = st.columns(2)
-            d1.success(f"**🟢 營收 (+${last_rec['Revenue']:,.0f})**")
-            d1.write(f"* P1: {dt.get('SaleQtyP1',0)}個 x ${dt.get('PriceP1',0)} = ${dt.get('RevP1',0):,.0f}")
-            d1.write(f"* P2: {dt.get('SaleQtyP2',0)}個 x ${dt.get('PriceP2',0)} = ${dt.get('RevP2',0):,.0f}")
-            d2.error(f"**🔴 支出 (-${last_rec['Expense']:,.0f})**")
-            d2.write(f"* 原料: ${dt.get('CostMat',0):,.0f} | 加工: ${dt.get('CostMfg',0):,.0f}")
-            d2.write(f"* 費用: ${dt.get('CostAd',0)+dt.get('CostRD',0):,.0f} | 利息: ${dt.get('Interest',0):,.0f}")
+            with d1:
+                st.success(f"**🟢 營收细項 (+${last_rec['Revenue']:,.0f})**")
+                p1_sales = dt.get('SaleQtyP1',0)
+                p1_demand = dt.get('DemandP1',0)
+                p1_stock = dt.get('StockP1',0)
+                st.write(f"* P1: {p1_sales}個 x ${dt.get('PriceP1',0)} = ${dt.get('RevP1',0):,.0f}")
+                if p1_demand > p1_stock: st.caption(f"⚠️ 缺貨! 需求 {p1_demand} > 庫存 {p1_stock}")
+                
+                p2_sales = dt.get('SaleQtyP2',0)
+                p2_demand = dt.get('DemandP2',0)
+                p2_stock = dt.get('StockP2',0)
+                st.write(f"* P2: {p2_sales}個 x ${dt.get('PriceP2',0)} = ${dt.get('RevP2',0):,.0f}")
+                if p2_demand > p2_stock: st.caption(f"⚠️ 缺貨! 需求 {p2_demand} > 庫存 {p2_stock}")
+
+            with d2:
+                st.error(f"**🔴 支出細項 (-${last_rec['Expense']:,.0f})**")
+                st.write(f"* 原料: ${dt.get('CostMat',0):,.0f}")
+                st.write(f"* 加工: ${dt.get('CostMfg',0):,.0f}")
+                st.write(f"* 費用: ${dt.get('CostAd',0)+dt.get('CostRD',0):,.0f}")
+                st.write(f"* 擴廠: ${dt.get('CostCapex',0):,.0f}")
+                st.write(f"* 利息: ${dt.get('Interest',0):,.0f}")
 
     # --- 庫存與負債 ---
     st.markdown("---")
@@ -492,9 +478,16 @@ def render_student_area(db, team_name):
     st.divider()
     has_err = (pp1 > avail_r1) or (pp2 > avail_r2) or ((pp1+pp2)>cap)
     
+    # --- 🔥 雙按鈕區 (核心修改) ---
     col_sub, col_next = st.columns(2)
-    btn_label = "✏️ 修改並重新提交" if is_submitted else "✅ 提交決策"
-    if col_sub.button(btn_label, type="secondary" if is_submitted else "primary", use_container_width=True, disabled=has_err, key=f"{team_name}_sub"):
+    
+    # 1. 提交/修改按鈕 (動態文字)
+    if is_submitted:
+        lbl = f"✏️ 修改第 {season} 季決策"
+    else:
+        lbl = f"✅ 提交第 {season} 季決策"
+        
+    if col_sub.button(lbl, type="secondary" if is_submitted else "primary", use_container_width=True, disabled=has_err, key=f"{team_name}_sub"):
         new_dec = {
             "price":{"P1":p1_p,"P2":p2_p}, "ad":{"P1":p1_ad,"P2":p2_ad},
             "production":{"P1":pp1,"P2":pp2}, "buy_rm":{"R1":br1,"R2":br2},
@@ -505,8 +498,9 @@ def render_student_area(db, team_name):
         db["decisions"][season][team_name] = new_dec
         save_db(db); st.balloons(); st.success("提交成功！"); time.sleep(1); st.rerun()
     
+    # 2. 進入下一季按鈕 (只有提交後才顯示)
     if is_submitted:
-        if col_next.button("🚀 進入下一季 (刷新)", type="primary", use_container_width=True):
+        if col_next.button("🚀 老師說結算好了？點此進入下一季", type="primary", use_container_width=True):
             st.rerun()
 
 # ==========================================
