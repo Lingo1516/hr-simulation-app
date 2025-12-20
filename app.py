@@ -4,106 +4,97 @@ import plotly.express as px
 import os
 
 # --- 1. 網頁設定 ---
-st.set_page_config(page_title="HR 離職戰情室", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="HR 離職分析戰情室", layout="wide")
 st.title("🚀 HR 員工離職分析戰情室")
-st.caption("EMBA 課程專用：自動化數據分析平台")
 
-# --- 2. 自動讀取老師上傳的檔案 ---
+# --- 2. 自動讀取 (檔名已更新為您提供的版本) ---
 @st.cache_data
 def load_data():
-    # 這是您上傳的檔案名稱 (必須跟 GitHub 上的檔名一模一樣，差一個字都不行)
-    file_name = 'HR-Employee-Attrition-完美中文版.xlsx - 工作表 1 - HR-Employee-Attrition-完.csv'
+    # 這裡改成您剛剛說的簡潔檔名
+    file_name = 'HR-Employee-Attrition-完美中文版.csv'
     
-    # 檢查檔案是否真的存在
     if os.path.exists(file_name):
         try:
-            # header=1 跳過第一列標題，從第二列開始讀
-            df = pd.read_csv(file_name, header=1)
-            # 欄位正名
+            # header=1 是因為原本檔案第一列可能是標題，如果檔案第一列就是欄位名稱，可以拿掉 header=1
+            # 保險起見，我們先用標準讀取，如果欄位跑掉再調整
+            df = pd.read_csv(file_name) 
+            
+            # 如果讀出來第一列看起來像標題，需要跳過，請打開下面這行註解：
+            # df = pd.read_csv(file_name, header=1)
+
+            # 欄位改名 (確保程式能運作)
             if '流失' in df.columns: df.rename(columns={'流失': '離職'}, inplace=True)
             return df
         except Exception as e:
-            st.error(f"檔案讀取失敗，請檢查格式: {e}")
+            st.error(f"❌ 讀取失敗：{e}")
             return None
     else:
+        # 如果還是找不到，印出錯誤讓老師知道
+        st.error(f"❌ 系統找不到檔案！")
+        st.code(f"程式正在找這個檔名：\n{file_name}", language="text")
+        st.warning("請老師確認 GitHub 上的檔名是否完全一致 (包含 .csv)")
         return None
 
 df = load_data()
 
-# --- 3. 介面顯示邏輯 ---
-
-if df is None:
-    # 如果這裡亮紅燈，代表 GitHub 上的檔名跟程式裡的檔名不對
-    st.error("⚠️ 系統找不到預設檔案！")
-    st.warning(f"請老師檢查 GitHub 上是否已有檔案，且名稱是否為：\nHR-Employee-Attrition-完美中文版.xlsx - 工作表 1 - HR-Employee-Attrition-完.csv")
-    
-    # 緊急備用：讓學生手動傳
-    uploaded = st.file_uploader("開啟緊急手動上傳模式", type=['csv'])
-    if uploaded:
-        df = pd.read_csv(uploaded, header=1)
-        if '流失' in df.columns: df.rename(columns={'流失': '離職'}, inplace=True)
-
-# --- 4. 戰情室主畫面 (資料成功載入後顯示) ---
+# --- 3. 成功讀取後，直接顯示圖表 ---
 if df is not None:
+    st.success("✅ 資料連線成功！直接開始分析。")
     
-    # === 左側篩選器 (Sidebar) ===
-    st.sidebar.header("🔍 分析篩選器")
-    
-    # 1. 部門
-    all_depts = list(df['部門'].unique())
-    sel_depts = st.sidebar.multiselect("選擇部門", all_depts, default=all_depts)
-    
-    # 2. 加班
-    ot_opt = st.sidebar.radio("是否加班", ["全部", "是", "否"], horizontal=True)
-    
-    # 3. 滿意度
-    if '工作滿意度' in df.columns:
-        sat_score = st.sidebar.slider("工作滿意度 (1低 - 4高)", 1, 4, (1, 4))
-
-    # === 資料過濾 ===
-    mask = df['部門'].isin(sel_depts)
-    if ot_opt != "全部":
-        mask = mask & (df['加班'] == ot_opt)
-    if '工作滿意度' in df.columns:
-        mask = mask & df['工作滿意度'].between(sat_score[0], sat_score[1])
+    # 預設全選
+    if '部門' in df.columns:
+        all_depts = list(df['部門'].unique())
         
-    filtered_df = df[mask]
+        # 側邊欄
+        with st.sidebar:
+            st.header("🔍 篩選面板")
+            sel_depts = st.multiselect("部門篩選", all_depts, default=all_depts)
+            if '加班' in df.columns:
+                ot_opt = st.radio("加班篩選", ["全部", "是", "否"])
+            else:
+                ot_opt = "全部"
 
-    # === 關鍵指標 (KPI) ===
-    total = len(filtered_df)
-    left_count = len(filtered_df[filtered_df['離職']=='是'])
-    rate = (left_count / total * 100) if total > 0 else 0
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("👥 篩選後人數", f"{total} 人")
-    col2.metric("👋 離職人數", f"{left_count} 人")
-    col3.metric("⚠️ 離職率", f"{rate:.1f}%")
-    
-    st.markdown("---")
+        # 篩選邏輯
+        mask = df['部門'].isin(sel_depts)
+        if ot_opt != "全部":
+            mask = mask & (df['加班'] == ot_opt)
+        filtered_df = df[mask]
+        
+        # --- 儀表板區 ---
+        col1, col2, col3 = st.columns(3)
+        
+        # 離職率計算
+        total = len(filtered_df)
+        left = len(filtered_df[filtered_df['離職']=='是']) if '離職' in filtered_df.columns else 0
+        rate = (left/total*100) if total > 0 else 0
+        
+        col1.metric("總人數", total)
+        col2.metric("離職人數", left)
+        col3.metric("離職率", f"{rate:.1f}%")
+        
+        st.markdown("---")
+        
+        # 圖表區
+        c1, c2 = st.columns(2)
+        
+        with c1:
+            st.subheader("📊 部門離職狀況")
+            if not filtered_df.empty:
+                fig = px.histogram(filtered_df, y="部門", color="離職", 
+                                 orientation='h',
+                                 color_discrete_map={'是':'#FF4B4B', '否':'#45aaf2'},
+                                 title="部門離職人數")
+                st.plotly_chart(fig, use_container_width=True)
+                
+        with c2:
+            st.subheader("🎂 年齡分佈")
+            if not filtered_df.empty and '年齡' in df.columns:
+                fig2 = px.histogram(filtered_df, x="年齡", color="離職",
+                                  color_discrete_map={'是':'#FF4B4B', '否':'#45aaf2'},
+                                  title="年齡層離職風險")
+                st.plotly_chart(fig2, use_container_width=True)
 
-    # === 互動圖表區 (Plotly - 無亂碼保證) ===
-    c1, c2 = st.columns(2)
-    
-    with c1:
-        st.subheader("📊 各部門離職狀況")
-        if not filtered_df.empty:
-            # 橫向長條圖 (字不會擠在一起)
-            fig = px.histogram(filtered_df, y="部門", color="離職", 
-                             orientation='h',
-                             color_discrete_map={'是':'#FF4B4B', '否':'#45aaf2'},
-                             title="部門離職分佈 (滑鼠移動可看數據)",
-                             text_auto=True)
-            st.plotly_chart(fig, use_container_width=True)
-            
-    with c2:
-        st.subheader("🎂 年齡層分佈")
-        if not filtered_df.empty and '年齡' in df.columns:
-            fig2 = px.histogram(filtered_df, x="年齡", color="離職",
-                              color_discrete_map={'是':'#FF4B4B', '否':'#45aaf2'},
-                              title="年齡層離職風險",
-                              nbins=20)
-            st.plotly_chart(fig2, use_container_width=True)
-
-    # === 詳細資料表 ===
-    with st.expander("📋 點擊展開：查看詳細員工名單"):
+        st.markdown("---")
         st.dataframe(filtered_df)
+    else:
+        st.error("❌ 檔案欄位不符：找不到「部門」欄位，請檢查 CSV 內容。")
