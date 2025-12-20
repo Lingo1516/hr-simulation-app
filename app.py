@@ -1,178 +1,128 @@
+import streamlit as st
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import warnings
 import platform
 import os
 
-# 忽略警告訊息
-warnings.filterwarnings('ignore')
-
-# ---------------------------------------------------------
-# 1. 設定中文字型 (這是讓圖表顯示中文的關鍵)
-# ---------------------------------------------------------
+# --- 1. 設定中文字型 (嘗試解決雲端中文亂碼問題) ---
 def set_chinese_font():
     system_name = platform.system()
     if system_name == "Windows":
-        plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei'] # 微軟正黑體
-    elif system_name == "Darwin": # Mac
+        plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei']
+    elif system_name == "Darwin": 
         plt.rcParams['font.sans-serif'] = ['Arial Unicode MS']
     else:
-        plt.rcParams['font.sans-serif'] = ['SimHei'] # Linux/Colab
-    plt.rcParams['axes.unicode_minus'] = False # 解決負號顯示問題
+        # Linux/Streamlit Cloud 預設通常沒有中文字型，這行是嘗試
+        plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans'] 
+    plt.rcParams['axes.unicode_minus'] = False
 
 set_chinese_font()
 
-# ---------------------------------------------------------
-# 2. 資料讀取與預處理 (針對您的檔案格式特別優化)
-# ---------------------------------------------------------
-print("🔄 正在讀取 HR 員工離職資料...")
+# --- 2. 網頁標題 ---
+st.title("🚀 HR 員工離職分析系統")
+st.markdown("針對 **HR-Employee-Attrition** 資料集的互動分析報告")
 
-# 您的檔案名稱
-file_name = 'HR-Employee-Attrition-完美中文版.xlsx - 工作表 1 - HR-Employee-Attrition-完.csv'
-
-# 檢查檔案是否存在
-if not os.path.exists(file_name):
-    print(f"❌ 錯誤：找不到檔案 '{file_name}'")
-    print("請確認檔案是否已下載，並放在與此程式相同的資料夾中。")
-    exit()
-
-try:
-    # 關鍵修正：header=1 表示跳過第一列(檔案標題)，從第二列開始讀取欄位
-    df = pd.read_csv(file_name, header=1)
+# --- 3. 讀取資料 ---
+@st.cache_data # 加速讀取
+def load_data():
+    # 嘗試讀取您上傳的特定檔案名稱
+    file_name = 'HR-Employee-Attrition-完美中文版.xlsx - 工作表 1 - HR-Employee-Attrition-完.csv'
     
-    # 關鍵修正：將 '流失' 欄位改名為 '離職' 以配合後續程式
-    if '流失' in df.columns:
-        df.rename(columns={'流失': '離職'}, inplace=True)
-    
-    print(f"✅ 成功讀取！資料總覽：{df.shape[0]}筆員工資料，{df.shape[1]}個欄位")
-    print("-" * 30)
+    # 如果找不到預設檔案，允許使用者上傳
+    if not os.path.exists(file_name):
+        return None
+        
+    try:
+        # header=1 跳過第一行標題，直接讀欄位
+        df = pd.read_csv(file_name, header=1)
+        if '流失' in df.columns:
+            df.rename(columns={'流失': '離職'}, inplace=True)
+        return df
+    except Exception as e:
+        st.error(f"讀取錯誤: {e}")
+        return None
 
-except Exception as e:
-    print(f"❌ 讀取檔案時發生未預期的錯誤：\n{e}")
-    exit()
+df = load_data()
 
-# ---------------------------------------------------------
-# 3. 定義分析功能函數
-# ---------------------------------------------------------
+# 如果找不到檔案，顯示上傳按鈕
+if df is None:
+    st.warning("⚠️ 找不到預設檔案，請上傳 CSV 檔")
+    uploaded_file = st.file_uploader("請上傳您的 HR 資料 csv", type=['csv'])
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file, header=1)
+            if '流失' in df.columns:
+                df.rename(columns={'流失': '離職'}, inplace=True)
+        except:
+            # 嘗試不跳過 header
+            uploaded_file.seek(0)
+            df = pd.read_csv(uploaded_file)
+            if '流失' in df.columns:
+                df.rename(columns={'流失': '離職'}, inplace=True)
+else:
+    st.success(f"已成功載入資料：{len(df)} 筆")
 
-def 離職分析篩選():
-    print("\n" + "="*60)
-    print("🎯 功能 1：員工離職互動篩選")
-    print("="*60)
+# --- 4. 分析主介面 (如果資料已載入) ---
+if df is not None:
     
-    print("\n請依序輸入篩選條件 (直接按 Enter 可跳過)：")
-    性別 = input("1. 性別 (男/女)：").strip()
-    部門 = input("2. 部門關鍵字 (如：研發, 銷售)：").strip()
-    加班 = input("3. 是否加班 (是/否)：").strip()
+    # 側邊欄：篩選條件
+    st.sidebar.header("🔍 篩選條件")
     
-    # 複製一份資料來篩選
+    dept_list = ['全部'] + list(df['部門'].unique())
+    selected_dept = st.sidebar.selectbox("選擇部門", dept_list)
+    
+    ot_list = ['全部', '是', '否']
+    selected_ot = st.sidebar.selectbox("是否加班", ot_list)
+    
+    # 執行篩選
     filtered_df = df.copy()
-    
-    if 性別:
-        filtered_df = filtered_df[filtered_df['性別'] == 性別]
-    if 部門:
-        filtered_df = filtered_df[filtered_df['部門'].str.contains(部門, na=False)]
-    if 加班:
-        filtered_df = filtered_df[filtered_df['加班'] == 加班]
-    
-    # 計算統計數據
-    總人數 = len(filtered_df)
-    離職人數 = len(filtered_df[filtered_df['離職'] == '是'])
-    離職率 = (離職人數 / 總人數 * 100) if 總人數 > 0 else 0
-    
-    print(f"\n📊 篩選結果：")
-    print(f"   符合條件人數：{總人數} 人")
-    print(f"   其中離職人數：{離職人數} 人")
-    print(f"   該族群離職率：{離職率:.1f}%")
-    print(f"   (全公司平均離職率：{(df['離職']=='是').mean()*100:.1f}%)")
-    
-    return filtered_df
-
-def 年齡分組分析():
-    print("\n" + "="*50)
-    print("🎂 功能 2：年齡分組離職分析")
-    print("="*50)
-    
-    # 建立年齡區間
-    df['年齡組'] = pd.cut(df['年齡'], bins=[0, 25, 35, 45, 55, 100], 
-                        labels=['25歲以下', '25-34歲', '35-44歲', '45-54歲', '55歲以上'])
-    
-    age_analysis = df.groupby('年齡組').agg({
-        '離職': lambda x: (x == '是').sum(),
-        '年齡': 'count' # 計算總人數
-    }).rename(columns={'離職': '離職人數', '年齡': '總人數'})
-    
-    age_analysis['離職率(%)'] = (age_analysis['離職人數'] / age_analysis['總人數'] * 100).round(1)
-    
-    print(age_analysis)
-    
-    # 繪圖
-    plt.figure(figsize=(10, 6))
-    bars = plt.bar(age_analysis.index, age_analysis['離職率(%)'], color='skyblue', alpha=0.8)
-    plt.title('各年齡層離職率比較', fontsize=16)
-    plt.ylabel('離職率 (%)')
-    plt.xlabel('年齡組')
-    plt.grid(axis='y', linestyle='--', alpha=0.3)
-    
-    # 在柱狀圖上標示數字
-    for bar in bars:
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height,
-                f'{height}%', ha='center', va='bottom')
-    
-    plt.tight_layout()
-    plt.show()
-    print("\n💡 圖表已顯示，請查看彈出視窗。")
-
-def 性別部門分析():
-    print("\n" + "="*50)
-    print("👫 功能 3：性別 x 部門交叉分析")
-    print("="*50)
-    
-    # 製作交叉表
-    pivot = df.pivot_table(index='部門', columns='性別', 
-                         values='離職', aggfunc=lambda x: (x == '是').mean()*100)
-    
-    print("各部門性別離職率(%)：")
-    print(pivot.round(1))
-    
-    # 繪圖
-    pivot.plot(kind='bar', figsize=(10, 6), rot=0)
-    plt.title('各部門性別離職率比較', fontsize=16)
-    plt.ylabel('離職率 (%)')
-    plt.legend(title='性別')
-    plt.tight_layout()
-    plt.show()
-    print("\n💡 圖表已顯示，請查看彈出視窗。")
-
-# ---------------------------------------------------------
-# 4. 主程式執行迴圈
-# ---------------------------------------------------------
-if __name__ == "__main__":
-    while True:
-        print("\n" + "█"*30)
-        print(" 🚀 HR 員工離職數據分析系統")
-        print("█"*30)
-        print("1. 互動篩選 (自訂條件查詢)")
-        print("2. 年齡分組分析 (查看哪個年紀最容易走)")
-        print("3. 性別與部門交叉分析")
-        print("4. 查看所有欄位名稱")
-        print("0. 結束程式")
+    if selected_dept != '全部':
+        filtered_df = filtered_df[filtered_df['部門'] == selected_dept]
+    if selected_ot != '全部':
+        filtered_df = filtered_df[filtered_df['加班'] == selected_ot]
         
-        choice = input("\n請輸入選項 (0-4)：").strip()
-        
-        if choice == '1':
-            離職分析篩選()
-        elif choice == '2':
-            年齡分組分析()
-        elif choice == '3':
-            性別部門分析()
-        elif choice == '4':
-            print(f"\n📝 欄位清單：\n{list(df.columns)}")
-        elif choice == '0':
-            print("👋 程式結束，謝謝使用！")
-            break
-        else:
-            print("❌ 無效選項，請重新輸入！")
+    # 計算指標
+    total = len(filtered_df)
+    left_count = len(filtered_df[filtered_df['離職'] == '是'])
+    rate = (left_count / total * 100) if total > 0 else 0
+    
+    # 顯示關鍵指標 (KPI)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("篩選後總人數", f"{total} 人")
+    col2.metric("離職人數", f"{left_count} 人")
+    col3.metric("離職率", f"{rate:.1f}%")
+    
+    st.markdown("---")
+    
+    # 分頁顯示不同圖表
+    tab1, tab2, tab3 = st.tabs(["📊 加班分析", "🎂 年齡分析", "💰 薪資分佈"])
+    
+    with tab1:
+        st.subheader("加班與離職的關係")
+        if '加班' in df.columns:
+            # 簡單長條圖
+            fig, ax = plt.subplots()
+            sns.countplot(x='加班', hue='離職', data=filtered_df, ax=ax, palette='Set2')
+            st.pyplot(fig)
+            st.caption("觀察重點：有加班的人(是)，橘色條(離職)的比例是否明顯較高？")
+            
+    with tab2:
+        st.subheader("不同年齡層的離職狀況")
+        if '年齡' in df.columns:
+            fig, ax = plt.subplots(figsize=(10, 5))
+            sns.histplot(data=filtered_df, x='年齡', hue='離職', multiple="stack", kde=True, ax=ax)
+            st.pyplot(fig)
+            st.caption("觀察重點：曲線高峰在哪裡？年輕人的離職比例是否較高？")
+            
+    with tab3:
+        st.subheader("薪資與離職關係 (箱型圖)")
+        if '月薪' in df.columns:
+            fig, ax = plt.subplots(figsize=(10, 5))
+            sns.boxplot(x='離職', y='月薪', data=filtered_df, ax=ax, palette='Pastel1')
+            st.pyplot(fig)
+            st.caption("觀察重點：離職群體的平均薪資線(箱子中間的線)是否比在職者低？")
+
+    # 顯示原始資料
+    with st.expander("點擊查看詳細資料表"):
+        st.dataframe(filtered_df)
