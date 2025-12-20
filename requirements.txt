@@ -1,5 +1,6 @@
 streamlit
 pandas
-gspread
-streamlit>=1.27
-openpyxl>=3.1.0
+numpy
+matplotlib
+seaborn
+openpyxl
